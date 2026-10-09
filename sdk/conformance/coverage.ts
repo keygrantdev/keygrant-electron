@@ -11,6 +11,7 @@
  */
 import type { FirstGroup, GroupName } from './inputs.js'
 import { LATER_COVERAGE } from './coverage-purchase.js'
+import { KEY_COVERAGE } from './coverage-keys.js'
 import {
   answer,
   endSecond,
@@ -56,6 +57,7 @@ const LEASE_STATUSES = [
   'flat -> invalid: device',
   'flat -> invalid: outdated',
   'flat -> invalid: tampered',
+  'flat -> invalid: unknown-key',
   'flat -> invalid: upgrade',
   'flat -> licensed, entitled',
   'flat -> licensed, test, entitled',
@@ -104,7 +106,7 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
   leases: {
     verdict: {
       of: leaseVerdict,
-      expect: ['device', 'expired', 'licensed', 'licensed, test', 'outdated', 'tampered', 'upgrade'],
+      expect: ['device', 'expired', 'licensed', 'licensed, test', 'outdated', 'tampered', 'unknown-key', 'upgrade'],
     },
     end: { of: endSecond, expect: END_SECOND },
     held: { of: heldTo, expect: HELD_TO },
@@ -114,7 +116,16 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
         const r = obj(v.verify)
         return `${r.valid === true ? 'valid' : String(r.reason)}${r.claims !== undefined ? ', with claims' : ''}`
       },
-      expect: ['bad-claims', 'bad-signature', 'expired, with claims', 'malformed', 'valid, with claims'],
+      expect: ['bad-claims', 'bad-signature', 'expired, with claims', 'malformed', 'unknown-key', 'valid, with claims'],
+    },
+    unknownKey: {
+      // Unknown-key is told before the lease's end is read: an expired one is answered the same.
+      of: (v) => {
+        if (obj(v.verify).reason !== 'unknown-key') return 'another'
+        const exp = Number(payloadOf(v.token).exp)
+        return exp * 1000 <= Number(v.now) ? 'unknown-key, expired' : 'unknown-key, live'
+      },
+      expect: ['another', 'unknown-key, expired', 'unknown-key, live'],
     },
     defaults: {
       of: (v) => {
@@ -336,4 +347,4 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
 }
 
 /** Every group's facets: the first groups', then the purchase groups' (`coverage-purchase.ts`). */
-export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE }
+export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE }

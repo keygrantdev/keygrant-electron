@@ -14,10 +14,22 @@ export type LicenseState = 'licensed' | 'trial' | 'expired' | 'invalid' | 'unlic
  * the licence was activated on another device (this machine changed, or the
  * licence file was copied from another one); activate again on this one.
  * `tampered`: the lease is not for this licence at all (another key or
- * activation, another product, a bad signature). `storage`: the licence file
- * could not be read just now (state `unknown`).
+ * activation, another product, a bad signature). `unknown-key`: the lease is
+ * signed by a key this build does not carry (`publicJwks`); asked online, the
+ * server signs one with the key it uses now, which a build carrying that key
+ * verifies. `storage`: the licence file could not be read just now (state
+ * `unknown`).
  */
-export type LicenseReason = 'revoked' | 'upgrade' | 'outdated' | 'offline' | 'tampered' | 'device' | 'trial' | 'storage'
+export type LicenseReason =
+  | 'revoked'
+  | 'upgrade'
+  | 'outdated'
+  | 'offline'
+  | 'tampered'
+  | 'unknown-key'
+  | 'device'
+  | 'trial'
+  | 'storage'
 
 export interface LicenseStatus {
   state: LicenseState
@@ -278,8 +290,16 @@ export interface LicenseConfig {
   product: string
   /** KeyGrant API base, e.g. "https://api.keygrant.dev". */
   apiBaseUrl: string
-  /** Product public key (JWK), embedded at build time for offline verification. */
-  publicJwk: JsonWebKey
+  /**
+   * The product's public keys (JWKs), embedded at build time for offline
+   * verification: the key that signs its leases, and the next one once the
+   * product has one staged (the `keys` of `GET /v1/products/<product>/pubkey`).
+   * A lease naming its key (`kid`) is verified by that key; one naming none by
+   * each in turn. Give this or `publicJwk`.
+   */
+  publicJwks?: readonly JsonWebKey[]
+  /** One public key (JWK): a key set of one. Give this or `publicJwks`. */
+  publicJwk?: JsonWebKey
   /**
    * Running app major version. Defaults to 1. Read as the server reads a
    * version: a 0.x build (0) runs as major 1, and a fraction is cut to its

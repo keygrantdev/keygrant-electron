@@ -234,12 +234,13 @@ describe('createFileStorage: writes', () => {
       // Another product's temp in the same folder is not this file's to clear.
       await writeFile(join(dir, 'maindeck.json.3.3.other.tmp'), '{}', 'utf8')
       await utimes(join(dir, 'maindeck.json.3.3.other.tmp'), old, old)
-      // Either side of the cutoff, five seconds each way.
+      // Either side of the cutoff, half the limit each way: a machine that stalls before the write still
+      // finds the younger young.
       const aged = (ms: number) => (Date.now() - ms) / 1000
       await writeFile(join(dir, 'sluice.json.4.4.younger.tmp'), '{}', 'utf8')
-      await utimes(join(dir, 'sluice.json.4.4.younger.tmp'), aged(STALE_TEMP_MS - 5_000), aged(STALE_TEMP_MS - 5_000))
+      await utimes(join(dir, 'sluice.json.4.4.younger.tmp'), aged(STALE_TEMP_MS / 2), aged(STALE_TEMP_MS / 2))
       await writeFile(join(dir, 'sluice.json.5.5.older.tmp'), '{}', 'utf8')
-      await utimes(join(dir, 'sluice.json.5.5.older.tmp'), aged(STALE_TEMP_MS + 5_000), aged(STALE_TEMP_MS + 5_000))
+      await utimes(join(dir, 'sluice.json.5.5.older.tmp'), aged(STALE_TEMP_MS * 1.5), aged(STALE_TEMP_MS * 1.5))
 
       await createFileStorage(path).write({ key: 'K' })
       expect((await readdir(dir)).sort()).toEqual([

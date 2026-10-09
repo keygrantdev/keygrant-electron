@@ -7,6 +7,7 @@ import { NO_PURCHASE, UNKEYED, sameKey, askDue, heldElsewhere, keptWith, leaseSt
 import { absoluteLink, activationPatch, referencedLink } from './pickup.js'
 import { asksOnValidLease } from './renewal.js'
 import { STATUS_CHECK_TIMEOUT_MS, enteredKey, errorOf, mapServerError, parseLeaseBody } from './wire.js'
+import { MissingEntitlementError, grants } from './entitlements.js'
 
 /**
  * Client-side licensing for desktop apps. Verifies signed JWT leases OFFLINE and only contacts the
@@ -126,6 +127,34 @@ export class License extends PurchaseEngine {
   }
 
   /**
+   * Whether the licence this device holds grants the entitlement `code`: a
+   * flag that is on, a number that is not zero, or a text that is not empty
+   * (`grants`). Offline, from the stored lease only: the entitlements of the
+   * status `status()` gives from what is stored, with no ask and no write, so
+   * a licence that does not license this build, and none at all, grant
+   * nothing. A running trial grants what its trial lease does. Never rejects
+   * for storage: a state that cannot be read grants nothing just now.
+   */
+  async has(code: string): Promise<boolean> {
+    return grants((await this.storedStatus()).entitlements, code)
+  }
+
+  /**
+   * As `has(code)`, but rejecting with `MissingEntitlementError`, which names
+   * `code`, when the licence does not grant that entitlement: for work that
+   * may run only when it does.
+   */
+  async require(code: string): Promise<void> {
+    if (!(await this.has(code))) throw new MissingEntitlementError(code)
+  }
+
+  /** The status from what is stored only, with no ask and no write, as a read-only `status()` answers it. */
+  private async storedStatus(): Promise<LicenseStatus> {
+    const state = await this.loadForStatus(true)
+    return state ? this.statusNow(state, false, true) : { ...UNREADABLE }
+  }
+
+  /**
    * Begin (or re-sync) a trial for this device. As `status()` for storage, as
    * it answers a status and an app may call it at launch: `unknown` when the
    * state cannot be read, and the server's trial when it cannot be saved.
@@ -166,8 +195,11 @@ export class License extends PurchaseEngine {
     // The answer is stamped with when it was asked for (`verdictAt`, guarded
     // clock): an older ask's answer, from another process, is not saved over it.
     const askedAt = this.effectiveNow(stored)
+    // Outside the request's try: a key set that cannot be imported is the app's
+    // configuration, never a network failure.
+    const kids = await this.keyIds()
     try {
-      const body = { key: entered, fingerprint, ...(kind ? { fingerprintKind: kind } : {}), name: this.deviceName, major: this.major }
+      const body = { key: entered, fingerprint, ...(kind ? { fingerprintKind: kind } : {}), name: this.deviceName, major: this.major, kids }
       res = await this.post('activate', body)
     } catch {
       return { ok: false, error: 'network' }
@@ -269,7 +301,7 @@ export class License extends PurchaseEngine {
     // the server gives no verdict (offline.ts `leaseStatus`).
     const offline = leaseStatus(evaluated, state.key)
     if (!evaluated.ok) {
-      // Not licensed here (expired, tampered, upgrade, outdated or device). Give
+      // Not licensed here (expired, tampered, unknown-key, upgrade, outdated or device). Give
       // the server a chance to heal it (issue a fresh lease) before locking the
       // user out, once the wait after the last ask is over, or when forced. Only
       // if the server is unreachable (or agrees) is the lease's own answer given.

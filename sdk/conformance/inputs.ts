@@ -166,6 +166,12 @@ export interface GroupInputs {
    * is held), from `startTrial()` (`start`) or from `status()`/`refresh()`.
    */
   claimBodies: Named & { secret: string; identity: IdentityJson; deviceHold: boolean; deviceName: string | null; major: number; start: boolean }
+  /** A public key's id (`keyId`): the RFC 7638 thumbprint a lease's `kid` names it by. */
+  keyIds: Named & { jwk: unknown }
+  /** A lease verified at `now` against the key set `keys` (`verifyLease` of `importVerifyingKeys`), and the set's ids. */
+  keySets: Named & { keys: JsonWebKey[]; token: string; now: number }
+  /** Whether entitlements, read leniently (`entitlementsOf`), grant `code` (`grants`). */
+  grants: Named & { ent: unknown; code: string }
 }
 
 /** A group's name. */
@@ -174,5 +180,8 @@ export type GroupName = keyof GroupInputs
 /** The purchase groups, which come after every other group in the file (`replay-purchase.ts`). */
 export type LaterGroup = 'majors' | 'purchaseUrls' | 'purchaseTokenKept' | 'claimDue' | 'parseClaimBody' | 'claimOutcomes' | 'trialReportDue' | 'purchaseReferences' | 'claimBodies'
 
+/** The key-set groups, which come after the purchase groups (`replay-keys.ts`). */
+export type KeyGroup = 'keyIds' | 'keySets' | 'grants'
+
 /** The groups before them (`replay.ts`). */
-export type FirstGroup = Exclude<GroupName, LaterGroup>
+export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup>

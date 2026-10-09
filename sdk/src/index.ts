@@ -1,4 +1,5 @@
 export { License } from './license.js'
+export { MissingEntitlementError, grants } from './entitlements.js'
 export {
   DEFAULT_HTTP_TIMEOUT_MS,
   createFileStorage,

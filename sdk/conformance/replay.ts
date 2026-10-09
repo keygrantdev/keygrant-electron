@@ -16,7 +16,7 @@
  *  - A function that answers "nothing" (undefined or null) is `null` in `expect`;
  *    inside an answer, a member with no value is left out.
  */
-import { entitlementsOf, fingerprintClaim, verifyLease, type LeaseClaims, type VerifyResult } from '@keygrant/shared'
+import { entitlementsOf, fingerprintClaim, verifyLease, type LeaseClaims, type VerifyResult, type VerifyingKey } from '@keygrant/shared'
 import {
   LEASED,
   NO_PURCHASE,
@@ -43,6 +43,7 @@ import { deviceFrom, type Device } from '../src/device.js'
 import type { DeviceIdentity, DeviceKind, StoredState } from '../src/types.js'
 import type { FirstGroup, GroupInputs, GroupName, IdentityJson } from './inputs.js'
 import { LATER } from './replay-purchase.js'
+import { KEYS } from './replay-keys.js'
 import { scripted } from './scripted.js'
 
 // --- JSON ---------------------------------------------------------------------
@@ -110,7 +111,7 @@ function identityFrom(given: IdentityJson): DeviceIdentity {
 }
 
 /** What verifying a lease says, claims included when it has them (valid, or merely expired). */
-function verified(v: VerifyResult): unknown {
+export function verified(v: VerifyResult): unknown {
   if (v.valid) return { valid: true, claims: plain(v.claims) }
   return plain({ valid: false, reason: v.reason, claims: v.claims })
 }
@@ -133,7 +134,8 @@ function renewalJson(outcome: RenewalOutcome): unknown {
 export interface Group<I> {
   /** The fields of a vector that are answers; every other field is an input. */
   outputs: readonly string[]
-  answer(input: I, key: CryptoKey): Promise<Record<string, unknown>> | Record<string, unknown>
+  /** `keys`: the file's `publicJwk`, as a key set of one. */
+  answer(input: I, keys: readonly VerifyingKey[]): Promise<Record<string, unknown>> | Record<string, unknown>
 }
 
 /** The older groups, each answered from its inputs as `GroupInputs` types them. Order is the order of the file. */
@@ -333,8 +335,8 @@ const FIRST: { [G in FirstGroup]: Group<GroupInputs[G]> } = {
   },
 }
 
-/** Every group: the first ones, then the purchase groups (`replay-purchase.ts`), in the order of the file. */
-export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER }
+/** Every group: the first ones, then the purchase groups (`replay-purchase.ts`), then the key-set groups (`replay-keys.ts`), in the order of the file. */
+export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS }
 
 /**
  * The same groups as a harness reading the file sees them: a vector's inputs

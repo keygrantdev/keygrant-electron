@@ -33,7 +33,7 @@ export async function renewals(ctx: Context): Promise<RenewalVector[]> {
     ['a fingerprint of no kind', { kind: null, ownClaim: await fingerprintClaim('licence-dongle-4471') }],
   ]
   const cannotTell: [string, DeviceView] = ['a run that cannot tell', { kind: null, ownClaim: null }]
-  const rows = [...unanswered(), ...leases(), ...unusable(), ...refusals(), ...others(), ...entitled()]
+  const rows = [...unanswered(), ...leases(), ...unusable(), ...refusals(), ...others(), ...entitled(), ...unknownKey()]
   return rows.flatMap((row) =>
     [...devices, ...(row.cannotTell ? [cannotTell] : [])].map(([who, device]) => ({
       name: `${row.name}; read on ${who}`,
@@ -142,4 +142,10 @@ function others(): Row[] {
     { name: 'a 403 whose body is a list: no verdict', response: { status: 403, json: ['revoked'] } },
     { name: 'a 403 with no body: no verdict', response: { status: 403, json: null } },
   ]
+}
+
+/** A 200 whose lease is signed by a key the build does not carry: no usable lease, no verdict (the lease held stands). */
+function unknownKey(): Row[] {
+  const ok = { status: 200, json: { lease: LEASE } }
+  return [{ name: 'a 200 with a lease signed by a key the build does not carry: no verdict', response: ok, check: { ok: false, reason: 'unknown-key' } }]
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { importVerifyingKey } from '@keygrant/shared'
+import { importVerifyingKeys } from '@keygrant/shared'
 import { generate, VECTORS_PATH } from '../conformance/generate.js'
 import { GROUPS } from '../conformance/replay.js'
 import { COVERAGE } from '../conformance/coverage.js'
@@ -36,7 +36,7 @@ describe('the SDK conformance vectors', () => {
      * rather than in every port that tries to reproduce it.
      */
     const file = committed()
-    const key = await importVerifyingKey(file.publicJwk as JsonWebKey)
+    const key = await importVerifyingKeys([file.publicJwk as JsonWebKey])
     const mismatches: string[] = []
     for (const [name, spec] of Object.entries(GROUPS)) {
       for (const vector of file[name] as Vector[]) {

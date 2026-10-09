@@ -23,6 +23,20 @@ export const OTHER_PRIVATE_JWK = {
   x: 'Tu1saauBwIOqXNkvG9zbjbBgRogtgu6I0Hd1B7MSnv8',
 } as const
 
+/**
+ * TEST ONLY: the next key a product stages beside the vectors' key, so a key set
+ * holds two (the `keySets` group).
+ */
+export const NEXT_PRIVATE_JWK = {
+  kty: 'OKP',
+  crv: 'Ed25519',
+  d: 'ck0GOFUAjKOmsmx0HqS_sGocjAfiBciYuotbAtDHTlA',
+  x: '5x8AEh6i8eeBZ4Pxc0e3J9wvaG_a13dwSwE-Ii1otps',
+} as const
+
+/** A private JWK's public half, as an app embeds it. */
+export const publicOf = (jwk: { kty: string; crv: string; x: string }) => ({ kty: jwk.kty, crv: jwk.crv, x: jwk.x })
+
 const enc = new TextEncoder()
 /** UTF-8 of a text. */
 export const utf8 = (text: string) => enc.encode(text)

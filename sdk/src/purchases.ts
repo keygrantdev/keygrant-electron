@@ -136,8 +136,9 @@ export abstract class PurchaseEngine extends TrialEngine {
 
   /** POST `claim` with its body (pickup.ts `claimRequest`); null when it threw or timed out. */
   private async postClaim(body: ClaimRequest, timeoutMs: number | undefined): Promise<ClaimResponse | null> {
+    const kids = await this.keyIds()
     try {
-      return await this.post('claim', body, timeoutMs)
+      return await this.post('claim', { ...body, kids }, timeoutMs)
     } catch {
       return null
     }

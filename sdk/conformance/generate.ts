@@ -21,7 +21,7 @@
 import { deepStrictEqual } from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { importVerifyingKey, OPEN_MAJOR } from '@keygrant/shared'
+import { importVerifyingKeys, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
 import { ASK_AGAIN_MS, CLAIM_EAGER_MS, CLAIM_WAIT_MS, PURCHASE_TOKEN_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS, TRIAL_REPORT_MS } from '../src/offline.js'
 import { MAX_CLAIM_FINGERPRINTS, MAX_CLAIM_FINGERPRINT_LENGTH, PURCHASE_REFERENCE_PREFIX } from '../src/pickup.js'
 import { CLOCK_TOLERANCE_MS } from '../src/clock.js'
@@ -54,6 +54,7 @@ import {
   purchaseUrls,
   trialReportDue,
 } from './vectors/purchases.js'
+import { grants, keyIds, keySets } from './vectors/keys.js'
 
 export { TEST_PRIVATE_JWK, TEST_PUBLIC_JWK } from './vectors/common.js'
 
@@ -102,6 +103,9 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   trialReportDue,
   purchaseReferences,
   claimBodies,
+  keyIds,
+  keySets,
+  grants,
 }
 
 const COMMENT =
@@ -126,10 +130,13 @@ const CONVENTIONS = [
   'parseClaimBody.expect keeps key, activationId and lease when they are strings, pending only when it is true, error only when it is a string of at least one character; every other member, and a body that is not an object, gives nothing ({}).',
   "claimOutcomes.response is the claim's answer (null for none at all); claimOutcomes.check is the SDK's offline check of the lease a 200 carried with key, activationId and lease (as leases.expect, with the claims when ok), null otherwise; claimOutcomes.kind is what the claim's fingerprint hashes (null for none). expect.result is bought, kept or dropped; expect.status is the status a bought key gives (null otherwise); expect.patch is the patch, with no stamp in it: a bought key's is saved with basis activation {at: the ask's guarded time, activationId, seen: the stored verdictAt}, which stamps verdictAt; a kept secret's with basis purchase {token: the secret, at: the purchaseTokenAt the ask read}; a dropped one's with basis purchase {token: the secret}.",
   'claimBodies: the body a claim sends, null when none is sent. The device is deviceFrom(identity, no install kind, deviceHold), as the devices group reads one; start is true for startTrial(), false for status() and refresh(). fingerprints counts characters in UTF-16 units, as the server does; deviceName is the name already cut (trimDeviceName), null for none; major is the major already read (majors).',
+  'publicJwk is the key set of one every group but keySets verifies with: a lease naming no key (kid) is verified by it, one naming its id too, and one naming another id is unknown-key.',
+  'keyIds.expect is the id a lease names a key by: the base64url (no padding) of the SHA-256 of {"crv":"Ed25519","kty":"OKP","x":"<x>"}, its RFC 7638 thumbprint, or null for a JWK every SDK refuses: one that is not an object, whose kty is not OKP or crv not Ed25519 (both required), that holds d, whose use (when given) is not sig, whose key_ops (when given) are not a list naming verify, whose alg (when given) is neither EdDSA nor Ed25519, or whose x, its trailing = dropped, is not canonical base64url of 32 bytes. No other member is read. keySets.kids are the ids of keys, in the order given, a key given twice kept once; keySets.verify is the lease verified against that set at now, as leases.verify.',
+  "grants.expect: whether ent, read as a lease's ent is read, grants code: a flag that is true, a number that is not 0, a text that is not empty; the code matched exactly.",
 ]
 
 export async function generate() {
-  const verifying = await importVerifyingKey(TEST_PUBLIC_JWK as JsonWebKey)
+  const verifying = await importVerifyingKeys([TEST_PUBLIC_JWK as JsonWebKey])
   const ctx = await context()
   const groups: Record<string, unknown[]> = {}
   for (const group of Object.keys(GROUPS) as GroupName[]) {
@@ -174,7 +181,7 @@ export async function generate() {
  * exactly what the file will carry, or the generator stops: an answer is never
  * computed from anything JSON cannot say.
  */
-async function answered(group: GroupName, inputs: readonly object[], key: CryptoKey): Promise<unknown[]> {
+async function answered(group: GroupName, inputs: readonly object[], key: readonly VerifyingKey[]): Promise<unknown[]> {
   if (inputs.length === 0) throw new Error(`the group ${group} has no vectors`)
   const vectors: unknown[] = []
   for (const input of inputs) {

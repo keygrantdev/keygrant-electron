@@ -3,7 +3,7 @@
  * and holder (offline.ts `checkLease`). A group only ever grows at its end, so no vector an SDK
  * already answers moves.
  */
-import { OPEN_MAJOR } from '@keygrant/shared'
+import { OPEN_MAJOR, keyId } from '@keygrant/shared'
 import type { LeaseHolder } from '../../src/offline.js'
 import type { LeaseVector } from '../inputs.js'
 import {
@@ -11,10 +11,12 @@ import {
   DAY,
   HEADER,
   KEY,
+  NEXT_PRIVATE_JWK,
   NOW,
   NOW_S,
   OTHER_PRIVATE_JWK,
   PRODUCT,
+  TEST_PUBLIC_JWK,
   b64url,
   claims,
   flipped,
@@ -52,6 +54,7 @@ export async function leases(ctx: Context): Promise<LeaseVector[]> {
     ...(await moreRefusedClaims()),
     ...(await exactMatching(ctx)),
     ...(await entitlements()),
+    ...(await keysNamed()),
   ]
   return leaseVectors(cases, ctx)
 }
@@ -304,5 +307,23 @@ async function entitlements(): Promise<LeaseCase[]> {
       token: await sign(claims({ ent: { ratio: 221.62324973788606, share: 975.1952520418383, total: 123456789012345680000 } })),
     },
     { name: 'entitlement names and texts past U+FFFF: kept as signed', token: await sign(claims({ ent: { '\u{1F3B5}': 'Pro \u{1D11E}' } })) },
+  ]
+}
+
+/**
+ * Leases that name the key that signed them (`kid`), judged with the vectors'
+ * key set of one: its own key's id verifies; another's is `unknown-key`, before
+ * the lease's end is read.
+ */
+async function keysNamed(): Promise<LeaseCase[]> {
+  const own = { ...HEADER, kid: await keyId(TEST_PUBLIC_JWK) }
+  const next = { ...HEADER, kid: await keyId({ kty: 'OKP', crv: 'Ed25519', x: NEXT_PRIVATE_JWK.x }) }
+  return [
+    { name: "a lease naming the vectors' key: licensed", token: await sign(claims(), own) },
+    { name: 'a lease naming a key the build does not carry: unknown-key', token: await sign(claims(), next, NEXT_PRIVATE_JWK) },
+    {
+      name: 'an expired lease naming a key the build does not carry: unknown-key, its end not read',
+      token: await sign(claims({ exp: NOW_S - 1 }), next, NEXT_PRIVATE_JWK),
+    },
   ]
 }

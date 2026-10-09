@@ -13,12 +13,12 @@ Node 20 or later; ESM and CommonJS, with types for both.
 
 ```ts
 import { License } from '@keygrant/electron'
-import PUBLIC_JWK from './keygrant-public.json'
+import KEYS from './keygrant-keys.json' // {"keys":[...]}
 
 const license = new License({
   product: 'sluice',
   apiBaseUrl: 'https://api.keygrant.dev',
-  publicJwk: PUBLIC_JWK,
+  publicJwks: KEYS.keys,
   major: 1,
 })
 
@@ -29,10 +29,25 @@ const result = await license.activate(key)
 `major` is the app's major version, read as KeyGrant's server reads a version:
 a 0.x build (`major: 0`) is major 1, and leaving it out is 1 as well.
 
-`keygrant-public.json` is the product's public key as a JWK: the `publicJwk`
-field of `GET https://api.keygrant.dev/v1/products/<slug>/pubkey` (public, no
-API key), fetched once and shipped with the app. The dashboard's Signing key tab
-shows the same key as SPKI and PEM, which the SDK does not take.
+`keygrant-keys.json` is the product's key set: `GET
+https://api.keygrant.dev/v1/products/<slug>/pubkey` (public, no API key) answers
+it as `keys`, and the dashboard's Signing key tab copies it (Copy key set).
+Fetch it when you build and ship it with the app. `publicJwk`, one key, still
+works: a set of one.
+
+**Why a set.** A lease names the key that signed it (`kid` in its header, the
+key's RFC 7638 thumbprint, which the SDK computes from the key itself). It is
+verified by that key; a lease that names none (every lease signed before key
+sets) by each key in turn; and one naming a key the build does not carry is
+refused: `status()` says `invalid` with reason `unknown-key` once the lease
+the device holds is one. When the product rotates its signing key, it first
+*stages* the next key, published beside the current one while every lease is
+still signed with the current key. Ship builds carrying both; once they are
+out, the product *switches*, and those builds verify every lease signed after
+it. Embed the whole set each time you build. Each activation, validate and
+claim reports the ids of the keys the build carries (`kids`), so the dashboard
+can count the devices still on builds without the staged key before you
+switch.
 
 The full guide (configuration, statuses, where the state is kept, trials,
 versions, device hold, test licences) is at https://keygrant.dev/docs.
@@ -105,7 +120,7 @@ length or entitlements reaches a running trial there.
 ## Entitlements: telling editions apart offline
 
 A licence can grant more than the base product: an edition, a number of seats,
-a feature. The lease signs them (its `ent` claim) and `status()` hands them to
+an add-on. The lease signs them (its `ent` claim) and `status()` hands them to
 the app as `entitlements`, read offline like everything else on the lease:
 
 ```ts
@@ -129,6 +144,24 @@ const seats = typeof status.entitlements?.seats === 'number' ? status.entitlemen
   number or a text are left out, and an `ent` that is not an object at all
   reads as none. The SDK enforces none of the server's caps on them; the
   signature is what it trusts.
+
+To ask whether the licence grants an entitlement, name its code:
+
+```ts
+if (await license.has('cloud_sync')) enableCloudSync()
+await license.require('export') // rejects with MissingEntitlementError (its entitlement is 'export')
+```
+
+`has(code)` is true for a flag that is on, a number that is not zero, or a text
+that is not empty; false for anything else, and for a code the lease does not
+grant (matched exactly, case included, and only as the lease's own member, so
+`constructor` is granted only when signed). It is answered offline from the
+stored lease only, as `status()` would answer from what is stored, with no
+request and no write: a licence that does not license this build, or none at
+all, grants nothing; a running trial grants what its trial lease does.
+`require(code)` rejects with `MissingEntitlementError`, naming the code, when
+`has` would be false. `grants(status.entitlements, code)` answers the same of a
+status already in hand.
 
 ## Building the package
 

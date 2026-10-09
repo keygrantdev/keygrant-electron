@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { generateKeyPair, importSigningKey, importVerifyingKey, signLease, verifyLease } from '@keygrant/shared'
+import { generateKeyPair, importSigningKey, importVerifyingKey, keyId, signLease, verifyLease } from '@keygrant/shared'
 import { CLAIM_EAGER_MS, CLAIM_WAIT_MS, PURCHASE_TOKEN_MS } from './offline.js'
 import { STATUS_CHECK_TIMEOUT_MS } from './wire.js'
 import { DEFAULT_HTTP_TIMEOUT_MS } from './adapters.js'
@@ -154,7 +154,7 @@ describe('the pickup: status() asks for the key bought with the token', () => {
     h.http.on('claim', () => bought(h))
     expect(await h.license.status()).toEqual({ state: 'licensed', key: BOUGHT_KEY })
     // The secret, never the reference, and every fingerprint this device answers to, as a validate sends them.
-    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-test', fingerprints: ['fp-test'], name: 'Rae’s laptop', major: 1 })
+    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-test', fingerprints: ['fp-test'], name: 'Rae’s laptop', major: 1, kids: [await keyId(h.publicJwk)] })
     const stored = h.getStored() ?? {}
     expect(stored).toMatchObject({ key: BOUGHT_KEY, activationId: 'act_1', checkedMajor: 1, verdictAt: NOW })
     for (const field of PURCHASE_FIELDS) expect(setFields(stored)).not.toContain(field)
@@ -276,7 +276,7 @@ describe('the pickup: status() asks for the key bought with the token', () => {
     const h = await harness(held(), { deviceHold: false, fingerprint: both })
     h.http.on('claim', () => ({ status: 200, json: { pending: true } }))
     await h.license.status()
-    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-own', fingerprints: ['fp-own', 'fp-host'], major: 1 })
+    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-own', fingerprints: ['fp-own', 'fp-host'], major: 1, kids: [await keyId(h.publicJwk)] })
   })
 
   it("bounds a forced claim (refresh()) by the HTTP bound, not a status check's", async () => {
@@ -428,7 +428,7 @@ describe('the pickup at startTrial()', () => {
     h.http.on('claim', () => ({ status: 200, json: { pending: true } }))
     expect(await license.startTrial()).toEqual({ state: 'unlicensed' })
     expect(reads.n).toBe(1)
-    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-host', fingerprintKind: 'hostname', fingerprints: ['fp-host'], major: 1 })
+    expect(h.http.bodyOf('claim')).toEqual({ token: TOKEN, fingerprint: 'fp-host', fingerprintKind: 'hostname', fingerprints: ['fp-host'], major: 1, kids: [await keyId(h.publicJwk)] })
     // The trial ask was made (the stash read), under the same reading: no own fingerprint, so no trial request.
     expect(stash.reads).toBe(1)
     expect(h.http.calls.map((c) => c.action)).toEqual(['claim'])

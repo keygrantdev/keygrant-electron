@@ -1,4 +1,4 @@
-import { importVerifyingKey, verifyLease, type VerifyResult } from '@keygrant/shared'
+import { importVerifyingKeys, publicKeyBytes, verifyLease, type VerifyResult, type VerifyingKey } from '@keygrant/shared'
 import {
   DEFAULT_HTTP_TIMEOUT_MS,
   createFileStorage,
@@ -37,8 +37,10 @@ export abstract class Engine {
   protected readonly major: number
   protected readonly a: Adapters
   private readonly base: string
-  private readonly publicJwk: JsonWebKey
-  private verifyingKey?: Promise<CryptoKey>
+  /** The product's public keys, as configured (`LicenseConfig.publicJwks`). */
+  private readonly publicJwks: readonly JsonWebKey[]
+  /** The key set, imported once with each key's id (`keySet`). */
+  private verifyingKeys?: Promise<VerifyingKey[]>
   /** Who this device is (`device`). */
   private deviceReader?: DeviceIdentityReader
   /** How long a request may take when the call names no bound of its own. */
@@ -58,7 +60,7 @@ export abstract class Engine {
     this.base = config.apiBaseUrl.replace(/\/$/, '')
     // As the server reads it (`majorOf`): one reading, used wherever the major is.
     this.major = majorOf(config.major)
-    this.publicJwk = config.publicJwk
+    this.publicJwks = keysOf(config)
     this.httpTimeoutMs = config.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS
     this.deviceHold = config.deviceHold ?? true
     const a = config.adapters ?? {}
@@ -136,8 +138,22 @@ export abstract class Engine {
   }
 
   protected verify(lease: string, now: number): Promise<VerifyResult> {
-    this.verifyingKey ??= importVerifyingKey(this.publicJwk)
-    return this.verifyingKey.then((key) => verifyLease(lease, key, now))
+    return this.keySet().then((keys) => verifyLease(lease, keys, now))
+  }
+
+  /**
+   * The ids of the keys this build carries (`kid`, each key's thumbprint), in
+   * the order configured: sent with each activation, validate and claim
+   * (`kids`), so the product's dashboard can count the devices whose builds
+   * do not carry a key yet.
+   */
+  protected async keyIds(): Promise<string[]> {
+    return (await this.keySet()).map((k) => k.kid)
+  }
+
+  private keySet(): Promise<VerifyingKey[]> {
+    this.verifyingKeys ??= importVerifyingKeys(this.publicJwks)
+    return this.verifyingKeys
   }
 
   /**
@@ -280,9 +296,12 @@ export abstract class Engine {
     // A machine id read here keys this install from now on (`deviceKind`):
     // written with whatever this ask writes, as the seat is re-keyed by it.
     const device = await this.device(MACHINE_ID_TIMEOUT_MS, state.deviceKind)
+    // Outside the request's try: a key set that cannot be imported is the app's
+    // configuration, never an unanswered check-in.
+    const kids = await this.keyIds()
     let response: ValidateResponse | null
     try {
-      response = await this.post('validate', this.validateBody(state, device), timeoutMs)
+      response = await this.post('validate', { ...this.validateBody(state, device), kids }, timeoutMs)
     } catch {
       response = null
     }
@@ -345,4 +364,29 @@ export abstract class Engine {
       ...(device.canTell && device.kind ? { fingerprintKind: device.kind } : {}),
     }
   }
+}
+
+/**
+ * The key set a configuration gives: `publicJwks`, or `publicJwk` as a set of
+ * one. Neither, both, an empty set, or a key that is not an Ed25519 public JWK
+ * is a configuration the SDK cannot verify a lease with, and throws.
+ */
+function keysOf(config: Pick<LicenseConfig, 'publicJwk' | 'publicJwks'>): readonly JsonWebKey[] {
+  const { publicJwk, publicJwks } = config
+  if (publicJwk !== undefined && publicJwks !== undefined) throw new Error('KeyGrant: give publicJwks or publicJwk, not both')
+  // A pasted `{"keys": [...]}` (what /pubkey answers) is refused by name: its `keys` is the array.
+  if (publicJwks !== undefined && !Array.isArray(publicJwks)) {
+    throw new Error('KeyGrant: publicJwks is an array of JWKs: the keys of /pubkey\'s answer')
+  }
+  const keys = publicJwks ?? (publicJwk !== undefined ? [publicJwk] : [])
+  if (keys.length === 0) throw new Error('KeyGrant: give the product\'s public keys (publicJwks)')
+  // Each key checked now, when the app is built and run, not at the first lease or check-in.
+  keys.forEach((jwk, i) => {
+    try {
+      publicKeyBytes(jwk)
+    } catch (e) {
+      throw new Error(`KeyGrant: public key ${i + 1} cannot be used: ${(e as Error).message}`)
+    }
+  })
+  return keys
 }

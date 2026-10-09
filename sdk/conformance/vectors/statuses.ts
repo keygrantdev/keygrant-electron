@@ -5,8 +5,9 @@
  * trial lease being the trial's only evidence). Only a lease that licenses, or a trial that runs,
  * carries its entitlements, and only when it grants any.
  */
+import { keyId } from '@keygrant/shared'
 import type { LeaseVector, TrialVector } from '../inputs.js'
-import { DAY_MS, HEADER, NOW, NOW_S, OTHER_PRIVATE_JWK, claims, sign, type Context } from './common.js'
+import { DAY_MS, HEADER, NEXT_PRIVATE_JWK, NOW, NOW_S, OTHER_PRIVATE_JWK, claims, publicOf, sign, type Context } from './common.js'
 import { MIXED_ENT, leaseVectors, type LeaseCase } from './leases.js'
 import { trialClaims, trialVector } from './trials.js'
 
@@ -49,6 +50,10 @@ export async function leaseStatuses(ctx: Context): Promise<LeaseVector[]> {
     { name: 'entitlements that are a number: licensed, with none', token: await sign(claims({ ent: 42 })) },
     { name: 'entitlements that are a flag: licensed, with none', token: await sign(claims({ ent: true })) },
     { name: 'an entitlement named __proto__: licensed, with it', token: await sign(claims({ ent: PROTO_ENT })) },
+    {
+      name: 'a lease signed by a key the build does not carry, with entitlements: invalid, unknown-key, with the key and none',
+      token: await sign(claims({ ent: MIXED_ENT }), { ...HEADER, kid: await keyId(publicOf(NEXT_PRIVATE_JWK)) }, NEXT_PRIVATE_JWK),
+    },
   ]
   return leaseVectors(cases, ctx)
 }

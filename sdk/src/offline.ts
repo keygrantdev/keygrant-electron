@@ -89,7 +89,7 @@ export function majorOf(configured: number | undefined): number {
 /** What a lease says about this build, offline. */
 export type LeaseCheck =
   | { ok: true; test: boolean; claims: LeaseClaims }
-  | { ok: false; reason: 'expired' | 'upgrade' | 'outdated' | 'tampered' | 'device' }
+  | { ok: false; reason: 'expired' | 'upgrade' | 'outdated' | 'tampered' | 'unknown-key' | 'device' }
 
 /** Whose a licence lease must be: the key and activation stored, and this device (device.ts). */
 export interface LeaseHolder {
@@ -121,7 +121,7 @@ export interface LeaseHolder {
  * is out of date; one above `major` needs an upgrade.
  */
 export function checkLease(v: VerifyResult, product: string, major: number, holder: LeaseHolder): LeaseCheck {
-  if (!v.valid) return { ok: false, reason: v.reason === 'expired' ? 'expired' : 'tampered' }
+  if (!v.valid) return { ok: false, reason: v.reason === 'expired' || v.reason === 'unknown-key' ? v.reason : 'tampered' }
   if (!forThisLicence(v.claims, product, holder)) return { ok: false, reason: 'tampered' }
   if (heldToAnother(v.claims, holder)) return { ok: false, reason: 'device' }
   if (major < (v.claims.minMajor ?? 1)) return { ok: false, reason: 'outdated' }
@@ -152,8 +152,9 @@ function heldToAnother(claims: Pick<LeaseClaims, 'fp' | 'fpk'>, device: Pick<Dev
  * key; the flag is how an app tells them apart, to refuse them in a release
  * build, say) and its entitlements only when it grants any (wire.ts
  * `entitled`); `expired` / `offline` once it has run out; `invalid` with the
- * reason, and the key, when it is not for this build or this device; `invalid`
- * / `tampered`, with no key, when it is not this licence's at all. Only a lease
+ * reason, and the key, when it is not for this build or this device, or is
+ * signed by a key the build does not carry (`unknown-key`); `invalid` /
+ * `tampered`, with no key, when it is not this licence's at all. Only a lease
  * that licenses carries entitlements.
  */
 export function leaseStatus(check: LeaseCheck, key: string | undefined): LicenseStatus {
