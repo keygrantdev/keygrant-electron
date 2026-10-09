@@ -1,0 +1,18 @@
+{
+  "name": "keygrant-electron",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.23.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "check:package": "pnpm --filter @keygrant/electron run check:package"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.0"
+  }
+}

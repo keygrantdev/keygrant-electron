@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "outDir": "dist/types",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "lib": ["ES2022", "WebWorker"],
+    "types": ["node"]
+  },
+  "include": ["src", "../shared/src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.fixture.ts", "../shared/src/**/*.test.ts"]
+}
