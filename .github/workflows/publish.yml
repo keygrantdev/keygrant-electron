@@ -1,22 +1,31 @@
 name: publish
 
-# A version tag (0.3.0, no "v") tests and builds @keygrant/electron, then publishes that build to npm
+# A version tag (0.3.0, no "v") builds and checks @keygrant/electron, then publishes that build to npm
 # through npm's trusted publishing: no npm token is stored anywhere, and the package carries provenance.
 # The build job, which installs dependencies, cannot request an identity token; the publish job, which can,
 # runs no package code. A version already on npm is skipped.
+
+# Run by hand from the Actions tab, from the tag itself (Use workflow from: the tag), it publishes that tag
+# the same way: the rescue for a tag whose push started no run. Never from a branch: the package's provenance
+# names the commit of the run's own ref.
 
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.ref_name }}
   cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+  RELEASE: KeyGrant Electron SDK
 
 jobs:
   build:
@@ -26,24 +35,47 @@ jobs:
       publish: ${{ steps.out.outputs.publish }}
       dist-tag: ${{ steps.out.outputs.dist-tag }}
     steps:
+      - name: Check the run is for a version tag
+        working-directory: .
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ] || ! [[ "$TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Run this from a version tag (Use workflow from: the tag, such as 0.3.1), never from a branch."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ env.TAG }}
           persist-credentials: false
+      - name: Check the tag is a KeyGrant release
+        working-directory: .
+        run: |
+          # Only what the release pipeline made is published: an annotated tag by KeyGrant, on KeyGrant's
+          # release commit for this version. Its source commit ran the SDK's suite before the tag was pushed.
+          git fetch --quiet --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          keygrant='KeyGrant <dev@keygrant.dev>'
+          if [ "$(git cat-file -t "refs/tags/$TAG")" != tag ] \
+            || [ "$(git for-each-ref --format='%(taggername) %(taggeremail)' "refs/tags/$TAG")" != "$keygrant" ] \
+            || [ "$(git log -1 --format='%an <%ae>|%cn <%ce>' "refs/tags/$TAG^{commit}")" != "$keygrant|$keygrant" ] \
+            || [ "$(git log -1 --format=%B "refs/tags/$TAG^{commit}")" != "$RELEASE $TAG" ]; then
+            echo "::error::$TAG is not a release the KeyGrant release pipeline made (an annotated tag by KeyGrant on its release commit): nothing is published."
+            exit 1
+          fi
+      # Node 22: the version the package's suite ran on.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 22
       - name: Check the tag is the package's version
         run: |
           version=$(node -p "require('./sdk/package.json').version")
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::The tag $GITHUB_REF_NAME is not the version in sdk/package.json ($version)."
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::The tag $TAG is not the version in sdk/package.json ($version)."
             exit 1
           fi
       - name: Check whether npm has it already
         id: out
         run: |
-          if [ "$(npm view "@keygrant/electron@$GITHUB_REF_NAME" version 2>/dev/null)" = "$GITHUB_REF_NAME" ]; then
-            echo "::notice::@keygrant/electron $GITHUB_REF_NAME is already on npm: nothing to publish."
+          if [ "$(npm view "@keygrant/electron@$TAG" version 2>/dev/null)" = "$TAG" ]; then
+            echo "::notice::@keygrant/electron $TAG is already on npm: nothing to publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -52,10 +84,10 @@ jobs:
           # (a fix to an older line) as `previous`.
           latest=$(npm view @keygrant/electron dist-tags.latest 2>/dev/null || true)
           below='const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number)); const i = [0, 1, 2].find((n) => a[n] !== b[n]); process.exit(i !== undefined && a[i] < b[i] ? 0 : 1)'
-          case "$GITHUB_REF_NAME" in
+          case "$TAG" in
             *-*) echo "dist-tag=next" >> "$GITHUB_OUTPUT" ;;
             *)
-              if [ -n "$latest" ] && node -e "$below" "$GITHUB_REF_NAME" "$latest"; then
+              if [ -n "$latest" ] && node -e "$below" "$TAG" "$latest"; then
                 echo "dist-tag=previous" >> "$GITHUB_OUTPUT"
               else
                 echo "dist-tag=latest" >> "$GITHUB_OUTPUT"
@@ -67,22 +99,20 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
-      - name: Test
-        if: steps.out.outputs.publish == 'true'
-        run: |
-          pnpm test
-          pnpm run typecheck
+      # No test suite here: the SDK's suite and its conformance vectors ran on the source commit this export was
+      # made from, before the tag was pushed. This job proves the artifact: built from the tagged source, then
+      # checked.
       - name: Pack and check the package
         if: steps.out.outputs.publish == 'true'
         run: |
           mkdir out
           (cd sdk && pnpm pack --pack-destination ../out)
-          node sdk/scripts/check-package.mjs --tarball "out/keygrant-electron-$GITHUB_REF_NAME.tgz"
+          node sdk/scripts/check-package.mjs --tarball "out/keygrant-electron-$TAG.tgz"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.out.outputs.publish == 'true'
         with:
           name: package
-          path: out/keygrant-electron-${{ github.ref_name }}.tgz
+          path: out/keygrant-electron-${{ env.TAG }}.tgz
           if-no-files-found: error
           retention-days: 7
 
@@ -98,6 +128,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: package
+      # Node 24, whose npm (11.5.1 or later) can publish through trusted publishing: nothing is downloaded here.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -107,8 +138,9 @@ jobs:
         run: |
           # Trusted publishing needs npm 11.5.1 or later.
           if ! node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"; then
-            npm install --global npm@11.21.0
+            echo "::error::npm $(npm --version) is older than 11.5.1, which trusted publishing needs."
+            exit 1
           fi
           npm --version
           # "./": a path npm cannot read as a package name or a GitHub owner/repository.
-          npm publish "./keygrant-electron-$GITHUB_REF_NAME.tgz" --access public --tag "$DIST_TAG" --provenance --ignore-scripts
+          npm publish "./keygrant-electron-$TAG.tgz" --access public --tag "$DIST_TAG" --provenance --ignore-scripts

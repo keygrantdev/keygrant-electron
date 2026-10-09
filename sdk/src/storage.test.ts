@@ -147,6 +147,32 @@ function memoryFs(files: Record<string, string> = {}) {
   }
 }
 
+/**
+ * Until `hold` is reached by the call started for it. Proceeding sooner lets the next call the test starts
+ * take the hold instead, and that call then waits on a release that comes only after it has finished: a
+ * deadlock. How many turns of the event loop a call takes to get there depends on the machine (its crypto
+ * runs off the loop), so this waits on the hold, not on a count of turns, and fails with a sentence, not a
+ * hang, if it is never reached. It watches `started`, the call itself: one that finishes, or fails, without
+ * reaching the hold fails this at once with what happened (and its rejection is handled here, so it is not
+ * reported apart as unhandled).
+ */
+async function untilReached(hold: { reached: () => boolean }, what: string, started: Promise<unknown>, withinMs = 4_000): Promise<void> {
+  let settled: { error?: unknown } | undefined
+  started.then(
+    () => (settled = {}),
+    (error: unknown) => (settled = { error }),
+  )
+  const deadline = Date.now() + withinMs
+  while (!hold.reached()) {
+    if (settled) {
+      const why = 'error' in settled ? `: ${settled.error instanceof Error ? settled.error.message : String(settled.error)}` : ''
+      throw new Error(`${what} finished without reaching its held operation${why}`)
+    }
+    if (Date.now() > deadline) throw new Error(`${what} never reached its held operation`)
+    await new Promise((r) => setImmediate(r))
+  }
+}
+
 const STATE_DIR = join(tmpdir(), 'keygrant-memory')
 const STATE = join(STATE_DIR, 'sluice.json')
 const SAVED = JSON.stringify({ key: 'SLUICE-AAAA-BBBB-CCCC-DDDD', activationId: 'act_1', lastSeen: 1 })
@@ -510,8 +536,8 @@ describe('a status() behind a call that has not finished', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const license = await licenseOver(memory, [], migrateFrom)
     const stuck = memory.holdNext('readFile')
-    void license.status()
-    for (let i = 0; i < 1000 && !stuck.reached(); i++) await new Promise((r) => setImmediate(r))
+    const first = license.status()
+    await untilReached(stuck, 'the first status()', first)
     const later = license.status()
     await vi.advanceTimersByTimeAsync(DEFAULT_HTTP_TIMEOUT_MS + 15_000)
     return { answer: await later, release: stuck.release }
@@ -579,6 +605,38 @@ describe('saves from more than one process', () => {
     expect(JSON.parse(memory.files[STATE] ?? '')).toMatchObject({ key: 'K', checkedMajor: 2, rev: 2 })
   })
 
+  it('waits for the first save to reach its hold however long it takes, so the second never takes the hold', async () => {
+    const memory = memoryFs({ [STATE]: JSON.stringify({ key: 'K', rev: 1 }) })
+    const [a, b] = [await saverOver(memory), await saverOver(memory)]
+    const held = memory.holdNext('create')
+    // A save that takes far more turns of the event loop to reach its write than a counted wait allowed
+    // (1,000): as a slow machine's crypto made one take. B, started sooner, took the hold and never finished.
+    const first = (async () => {
+      for (let i = 0; i < 5_000; i++) await new Promise((r) => setImmediate(r))
+      return a.patch({ keptMajor: 2 })
+    })()
+    await untilReached(held, 'the first save', first)
+    await b.patch({ checkedMajor: 3 })
+    held.release()
+    await first
+    expect(JSON.parse(memory.files[STATE] ?? '')).toMatchObject({ keptMajor: 2, checkedMajor: 3 })
+  })
+
+  it('fails with a sentence, not a hang, when the held operation is never reached', async () => {
+    const memory = memoryFs({})
+    const held = memory.holdNext('create')
+    await expect(untilReached(held, 'nothing', new Promise(() => undefined), 50)).rejects.toThrow('nothing never reached its held operation')
+  })
+
+  it('fails at once, saying so, when the call finishes or fails without reaching its hold', async () => {
+    const memory = memoryFs({})
+    const held = memory.holdNext('create')
+    const started = Date.now()
+    await expect(untilReached(held, 'a read', Promise.resolve('done'), 20_000)).rejects.toThrow('a read finished without reaching its held operation')
+    await expect(untilReached(held, 'a save', Promise.reject(new Error('EACCES')), 20_000)).rejects.toThrow('a save finished without reaching its held operation: EACCES')
+    expect(Date.now() - started).toBeLessThan(5_000)
+  })
+
   it.each([
     ['a stamped state', { [STATE]: JSON.stringify({ key: 'K', rev: 4 }) }],
     ["an older SDK's state, never stamped", { [STATE]: JSON.stringify({ key: 'K' }) }],
@@ -589,7 +647,7 @@ describe('saves from more than one process', () => {
     // A has read the state and is about to write it; B saves in between.
     const held = memory.holdNext('create')
     const first = a.patch({ keptMajor: 2 })
-    for (let i = 0; i < 1000 && !held.reached(); i++) await new Promise((r) => setImmediate(r))
+    await untilReached(held, 'the first save', first)
     await b.patch({ checkedMajor: 3 })
     held.release()
     await first
@@ -618,7 +676,7 @@ describe('saves from more than one process', () => {
     const [a, b] = [await saverOver(memory), await saverOver(memory)]
     const held = memory.holdNext('create')
     const first = a.patch(aPatch, aAsked && { answer: aAsked })
-    for (let i = 0; i < 1000 && !held.reached(); i++) await new Promise((r) => setImmediate(r))
+    await untilReached(held, 'the first save', first)
     await b.patch(bPatch, bAsked && { answer: bAsked })
     held.release()
     await first
@@ -635,7 +693,7 @@ describe('saves from more than one process', () => {
     const about = { about: { activationId: 'act_1' } }
     const held = memory.holdNext('create')
     const first = a.patch({ keptMajor: 3 }, about)
-    for (let i = 0; i < 1000 && !held.reached(); i++) await new Promise((r) => setImmediate(r))
+    await untilReached(held, 'the first save', first)
     await b.patch({ keptMajor: 5 }, about)
     held.release()
     await first
@@ -659,7 +717,9 @@ describe('saves from more than one process', () => {
   })
 })
 
-describe('answers saved by two instances of the app', () => {
+// Each test makes a signing key, signs leases and runs two instances over one file: well inside a second
+// here, but one timed out at five on a shared CI runner, so the limit is generous.
+describe('answers saved by two instances of the app', { timeout: 30_000 }, () => {
   const KEY = 'SLUICE-AAAA-BBBB-CCCC-DDDD'
   const NOW = 1_757_000_000_000
   const DAY = 86_400_000
@@ -689,7 +749,7 @@ describe('answers saved by two instances of the app', () => {
     async function interleave<T>(first: () => Promise<T>, between: () => Promise<void>): Promise<T> {
       const saving = memory.holdNext('create')
       const running = first()
-      for (let i = 0; i < 1000 && !saving.reached(); i++) await new Promise((r) => setImmediate(r))
+      await untilReached(saving, 'the first instance', running, 25_000)
       await between()
       saving.release()
       return running

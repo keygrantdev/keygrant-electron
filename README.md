@@ -26,8 +26,8 @@ pnpm run check:package
 
 ## Releases
 
-Each release is a version tag (`0.3.0`). The tag runs `.github/workflows/publish.yml`, which tests and
-builds the package and publishes it to npm through npm's trusted publishing, with provenance.
+Each release is a version tag (`0.3.1`). The tag runs `.github/workflows/publish.yml`, which builds and
+checks the package and publishes it to npm through npm's trusted publishing, with provenance.
 
 ## License
 
