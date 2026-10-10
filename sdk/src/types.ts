@@ -170,24 +170,6 @@ export interface StoredState {
    */
   verdictAt?: number
   /**
-   * The one-time purchase SECRET `purchaseUrl` keeps (43 URL-safe
-   * characters: 256 random bits), held while no key is, until a key bought
-   * with it is picked up (the `claim` ask), the server answers that it never
-   * will be, or PURCHASE_TOKEN_MS has passed since its link was last handed
-   * out. Sent nowhere but in the claim: a link carries only a hash of it
-   * (pickup.ts `purchaseReference`).
-   */
-  purchaseToken?: string
-  /** When (guarded device clock, ms) `purchaseUrl` last handed out the secret's link: its bound runs from here. */
-  purchaseTokenAt?: number
-  /**
-   * When (device clock, ms) the claim was last asked and brought no key back:
-   * `status()` asks again on its own once CLAIM_WAIT_MS has passed, for a day
-   * after the link (`claimDue`). Cleared by `purchaseUrl`, so the first status
-   * after a link asks.
-   */
-  claimAskedAt?: number
-  /**
    * When (guarded device clock, ms) a running trial last reported its launch
    * (`trial`, sent in the background by `status()`): at most once a day
    * (TRIAL_REPORT_MS), counting a trial answer (`trialAt`) as a report.

@@ -22,8 +22,7 @@ import { deepStrictEqual } from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { importVerifyingKeys, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
-import { ASK_AGAIN_MS, CLAIM_EAGER_MS, CLAIM_WAIT_MS, PURCHASE_TOKEN_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS, TRIAL_REPORT_MS } from '../src/offline.js'
-import { MAX_CLAIM_FINGERPRINTS, MAX_CLAIM_FINGERPRINT_LENGTH, PURCHASE_REFERENCE_PREFIX } from '../src/pickup.js'
+import { ASK_AGAIN_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS, TRIAL_REPORT_MS } from '../src/offline.js'
 import { CLOCK_TOLERANCE_MS } from '../src/clock.js'
 import { MAX_DEVICE_NAME, MAX_KEY, STATUS_CHECK_TIMEOUT_MS } from '../src/wire.js'
 import { DEFAULT_HTTP_TIMEOUT_MS, KEEP_CORRUPT, STALE_TEMP_MS, UNKNOWN_HOST } from '../src/adapters.js'
@@ -44,16 +43,7 @@ import { machineIds, mountinfo } from './vectors/machine-id.js'
 import { renewals } from './vectors/renewals.js'
 import { leaseStatuses, trialLeaseStatuses } from './vectors/statuses.js'
 import { entitlementNumbers } from './vectors/numbers.js'
-import {
-  claimBodies,
-  claimDue,
-  claimOutcomes,
-  parseClaimBody,
-  purchaseReferences,
-  purchaseTokenKept,
-  purchaseUrls,
-  trialReportDue,
-} from './vectors/purchases.js'
+import { referencedLinks, trialReportDue } from './vectors/later.js'
 import { grants, keyIds, keySets } from './vectors/keys.js'
 
 export { TEST_PRIVATE_JWK, TEST_PUBLIC_JWK } from './vectors/common.js'
@@ -95,14 +85,8 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   trialLeaseStatuses,
   entitlementNumbers,
   majors,
-  purchaseUrls,
-  purchaseTokenKept,
-  claimDue,
-  parseClaimBody,
-  claimOutcomes,
+  referencedLinks,
   trialReportDue,
-  purchaseReferences,
-  claimBodies,
   keyIds,
   keySets,
   grants,
@@ -124,12 +108,9 @@ const CONVENTIONS = [
   'trialLeaseStatuses: the stored state is the trial start and the trial lease (trialStart, trialLease = token), the lease judged for device as trials judges it.',
   'entitlementNumbers.json is a number as the server writes it (JSON.stringify); entitlementNumbers.expect is the IEEE-754 bits, sign first, as 16 lowercase hex digits, of the double an ent member reads from it (entitlementsOf of {"n": json}): a reader that rounds wrongly fails here though it reads the file and a lease alike.',
   "majors: the major a build configured as configured (null: none) runs as, 0.x read as 1 as the server reads it. A vector marked jsOnly holds a fraction, which no typed port's config can hold, and every typed port skips it; a negative is not marked, and only a port whose major type is unsigned skips it.",
-  "purchaseUrls: the link purchaseUrl answers for the held secret: link with purchaseReferences' reference for secret as its one client_reference_id. The link is read as an absolute URL (every link here is already in its normal form), and its query is edited as text: each parameter named exactly client_reference_id (the text before its first =, or all of it) and each empty one left out, the others kept as written and in order, client_reference_id=<reference> added last (a reference needs no escaping), the fragment kept. upgradeUrl builds its link the same way, with the activation id.",
-  "purchaseReferences: the reference a link carries for a purchase secret: kgp_ and the base64url (no padding) of the SHA-256 of the secret's UTF-8 bytes. The secret stays on the device and is sent only in the claim.",
-  "purchaseTokenKept, claimDue and trialReportDue take a stored state; purchaseTokenKept and trialReportDue judge it at now (the guarded clock); claimDue judges the link's freshness (purchaseTokenAt) at now and the wait (claimAskedAt) at clockNow (the device clock).",
-  'parseClaimBody.expect keeps key, activationId and lease when they are strings, pending only when it is true, error only when it is a string of at least one character; every other member, and a body that is not an object, gives nothing ({}).',
-  "claimOutcomes.response is the claim's answer (null for none at all); claimOutcomes.check is the SDK's offline check of the lease a 200 carried with key, activationId and lease (as leases.expect, with the claims when ok), null otherwise; claimOutcomes.kind is what the claim's fingerprint hashes (null for none). expect.result is bought, kept or dropped; expect.status is the status a bought key gives (null otherwise); expect.patch is the patch, with no stamp in it: a bought key's is saved with basis activation {at: the ask's guarded time, activationId, seen: the stored verdictAt}, which stamps verdictAt; a kept secret's with basis purchase {token: the secret, at: the purchaseTokenAt the ask read}; a dropped one's with basis purchase {token: the secret}.",
-  'claimBodies: the body a claim sends, null when none is sent. The device is deviceFrom(identity, no install kind, deviceHold), as the devices group reads one; start is true for startTrial(), false for status() and refresh(). fingerprints counts characters in UTF-16 units, as the server does; deviceName is the name already cut (trimDeviceName), null for none; major is the major already read (majors).',
+  "referencedLinks: link with reference as its one client_reference_id, as upgradeUrl answers it with the stored activation id. The link is read as an absolute URL (every link here is already in its normal form), and its query is edited as text: each parameter named exactly client_reference_id (the text before its first =, or all of it) and each empty one left out, the others kept as written and in order, client_reference_id=<reference> added last (a reference needs no escaping), the fragment kept.",
+  'trialReportDue takes a stored state and judges it at now (the guarded clock).',
+  'merges.latest may hold purchaseToken, purchaseTokenAt and claimAskedAt, which an earlier version stored to buy from the app: every save leaves them out, whatever its basis.',
   'publicJwk is the key set of one every group but keySets verifies with: a lease naming no key (kid) is verified by it, one naming its id too, and one naming another id is unknown-key.',
   'keyIds.expect is the id a lease names a key by: the base64url (no padding) of the SHA-256 of {"crv":"Ed25519","kty":"OKP","x":"<x>"}, its RFC 7638 thumbprint, or null for a JWK every SDK refuses: one that is not an object, whose kty is not OKP or crv not Ed25519 (both required), that holds d, whose use (when given) is not sig, whose key_ops (when given) are not a list naming verify, whose alg (when given) is neither EdDSA nor Ed25519, or whose x, its trailing = dropped, is not canonical base64url of 32 bytes. No other member is read. keySets.kids are the ids of keys, in the order given, a key given twice kept once; keySets.verify is the lease verified against that set at now, as leases.verify.',
   "grants.expect: whether ent, read as a lease's ent is read, grants code: a flag that is true, a number that is not 0, a text that is not empty; the code matched exactly.",
@@ -164,13 +145,7 @@ export async function generate() {
       STALE_TEMP_MS,
       UPDATE_ATTEMPTS,
       UNKNOWN_HOST,
-      CLAIM_WAIT_MS,
-      PURCHASE_TOKEN_MS,
       TRIAL_REPORT_MS,
-      PURCHASE_REFERENCE_PREFIX,
-      CLAIM_EAGER_MS,
-      MAX_CLAIM_FINGERPRINTS,
-      MAX_CLAIM_FINGERPRINT_LENGTH,
     },
     ...groups,
   }

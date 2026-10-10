@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- `purchaseUrl` is removed, and the SDK no longer asks for a bought key at `status()`, `refresh()` or
+  `startTrial()`. To sell from the app, open your Payment Link from your own Buy button; the customer types
+  the key from the delivery email (`activate`). A purchase secret an earlier version stored is ignored, and
+  left out the next time the SDK saves its state.
+- `StoredState` no longer has `purchaseToken`, `purchaseTokenAt` or `claimAskedAt`: a storage adapter or test
+  code that sets them stops compiling, and whatever it sets is left out of the next save.
+
 ## 0.4.0
 
 - Key sets: `publicJwks` takes the product's public keys (the `keys` of `/pubkey`: the key that signs its

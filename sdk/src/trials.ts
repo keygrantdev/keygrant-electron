@@ -9,7 +9,6 @@
  */
 import type { StoredState, LicenseStatus } from './types.js'
 import { Engine } from './engine.js'
-import type { Device } from './device.js'
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
 import {
   ASK_AGAIN_MS,
@@ -77,9 +76,8 @@ export abstract class TrialEngine extends Engine {
     if (unsaved && (await this.saveBestEffort(unsaved.patch, undefined, unsaved.basis))) this.unsavedTrial = undefined
   }
 
-  /** `startTrial()`'s trial ask, under the device `startTrial()` read (`known`), else read now. */
-  protected async startTrialNow(state: StoredState, known?: Device): Promise<LicenseStatus> {
-    const { latest } = await this.askTrial(state, ACTIVATE_MACHINE_ID_TIMEOUT_MS, undefined, known)
+  protected async startTrialNow(state: StoredState): Promise<LicenseStatus> {
+    const { latest } = await this.askTrial(state, ACTIVATE_MACHINE_ID_TIMEOUT_MS)
     // The server's trial even when it could not be saved: kept for this
     // process (`unsavedTrial`) until a later call saves it.
     return this.trialStatus(latest, this.effectiveNow(state))
@@ -94,9 +92,8 @@ export abstract class TrialEngine extends Engine {
     state: StoredState,
     machineIdTimeoutMs: number,
     timeoutMs?: number,
-    known?: Device,
   ): Promise<{ reached: boolean; latest: StoredState }> {
-    const device = known ?? (await this.device(machineIdTimeoutMs, state.deviceKind))
+    const device = await this.device(machineIdTimeoutMs, state.deviceKind)
     // The stash is the app's own adapter (the Windows registry, say), and it can
     // cost nothing: one that cannot be read is no evidence, and `startTrial()`
     // still answers rather than reject.

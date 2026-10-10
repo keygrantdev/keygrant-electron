@@ -150,15 +150,15 @@ describe('a running trial reports its launch', () => {
 describe('every answer parser ignores members it does not know', () => {
   const EXTRA = { future: { nested: [1, 2] }, note: 'added by a later server' }
 
-  it('activate, validate, trial and claim', async () => {
-    const h = await harness({ purchaseToken: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', purchaseTokenAt: NOW })
+  it('activate, validate and trial', async () => {
+    const h = await harness()
     const lease = await h.sign('KEY-1', 'perpetual', 30 * 24 * 3600)
-    h.http.on('claim', () => ({ status: 200, json: { key: 'KEY-1', activationId: 'act_1', lease, ...EXTRA } }))
-    h.http.on('validate', () => ({ status: 200, json: { lease, ...EXTRA } }))
     h.http.on('activate', () => ({ status: 200, json: { lease, activationId: 'act_1', ...EXTRA } }))
+    h.http.on('validate', () => ({ status: 200, json: { lease, ...EXTRA } }))
+    expect(await h.license.activate('KEY-1')).toEqual({ ok: true })
     expect(await h.license.status()).toEqual({ state: 'licensed', key: 'KEY-1' })
     expect(await h.license.refresh()).toEqual({ state: 'licensed', key: 'KEY-1' })
-    expect(await h.license.activate('KEY-1')).toEqual({ ok: true })
+    expect(h.http.count('validate')).toBe(1)
 
     const trial = await harness()
     const trialLease = await trial.sign('trial:fp-test', 'trial', 5 * 24 * 3600)

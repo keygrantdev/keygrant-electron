@@ -44,63 +44,29 @@ the device holds is one. When the product rotates its signing key, it first
 *stages* the next key, published beside the current one while every lease is
 still signed with the current key. Ship builds carrying both; once they are
 out, the product *switches*, and those builds verify every lease signed after
-it. Embed the whole set each time you build. Each activation, validate and
-claim reports the ids of the keys the build carries (`kids`), so the dashboard
+it. Embed the whole set each time you build. Each activation and validate
+reports the ids of the keys the build carries (`kids`), so the dashboard
 can count the devices still on builds without the staged key before you
 switch.
 
 The full guide (configuration, statuses, where the state is kept, trials,
 versions, device hold, test licences) is at https://keygrant.dev/docs.
 
-## Buying from the app: no key to type
+## Buying from the app
 
 Give a customer who holds no key a Buy button that opens your Stripe Payment
-Link through `purchaseUrl`. When they come back to the app, the key they bought
-is picked up and this device activated on it, with nothing typed:
+Link. The checkout emails them their key, and they type it into the app:
 
 ```ts
 import { shell } from 'electron'
 
-let checkoutOpened = false
-const url = await license.purchaseUrl('https://buy.stripe.com/your-link')
-if (url) {
-  await shell.openExternal(url) // url is null while a key is held: use upgradeUrl() for an upgrade
-  checkoutOpened = true
-}
-
-// When the customer is back (the window regains focus, say), and only while a
-// checkout is open: refresh() on a licensed install validates online every time.
-if (checkoutOpened && (await license.status()).state !== 'licensed') {
-  const status = await license.refresh() // 'licensed' once the checkout has gone through
-  if (status.state === 'licensed') checkoutOpened = false
-}
+await shell.openExternal('https://buy.stripe.com/your-link')
+// Once they have the key from the email:
+const result = await license.activate(enteredKey)
 ```
 
-- **How:** `purchaseUrl` keeps a one-time secret for this install (random,
-  never the device's fingerprint) and sets the link's `client_reference_id` to
-  a hash of it, so a link that leaks (browser history, a screenshot) claims
-  nothing. The checkout keeps that reference on the key it mints, and the SDK
-  asks for the key with the secret: at once on `refresh()` or `startTrial()`,
-  and from `status()` at most every five minutes for a day after the link
-  (after that, `refresh()` or `startTrial()` still ask). Until the key is
-  bought, the status is what it was (the trial, or unlicensed).
-- **Calling it again** hands out the same secret's link, so the key bought
-  through either link is picked up (paying twice buys two keys; the second
-  comes by email). A secret is dropped 30 days after the last link, once its
-  key is picked up, or when the product's "Converts in place" switch is off
-  (the customer then types the key from the delivery email).
-- **It rejects** when the link is not an absolute URL, or when the secret cannot
-  be saved (a link whose secret is lost could never be picked up).
-- **Turn the product's "Converts in place" switch on** once your app uses
-  `purchaseUrl`: it is off by default, and until it is on every pickup is
-  refused and the customer types the key from the delivery email. Know the
-  trade before you do: whoever opens a checkout owns its pickup. Your Payment
-  Link is public, so anyone can add a `client_reference_id` of their own to it
-  and get buyers to pay through their copy of the link; the key bought that
-  way is picked up by the link's maker, not the buyer. A link from the app is
-  the buyer's own; a leaked one claims nothing, as it carries only a hash of
-  the app's secret. A planted pickup shows in the key's history, and you can
-  free the seat for the buyer.
+For a customer who already holds a key, `upgradeUrl(link)` adds this install's
+activation to the link, so an upgrade sale finds the key it upgrades.
 
 ## Trials: what the app calls
 

@@ -152,7 +152,6 @@ export function leasePatches(): GroupInputs['leasePatches'][] {
   return [
     { name: 'what a new lease clears', patch: 'LEASED' },
     { name: 'what deactivating leaves: trial evidence and the clock guard only', patch: 'UNKEYED' },
-    { name: 'what an activation and a deactivation clear of a purchase: the token and its stamps', patch: 'NO_PURCHASE' },
   ]
 }
 

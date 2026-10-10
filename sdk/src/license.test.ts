@@ -7,6 +7,7 @@ import { License } from './license.js'
 import { STATUS_CHECK_TIMEOUT_MS } from './wire.js'
 import { ASK_AGAIN_MS, CLOCK_TOLERANCE_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS } from './offline.js'
 import { DEFAULT_HTTP_TIMEOUT_MS } from './adapters.js'
+import { launchReportSettled } from './trials.js'
 import type { Fingerprinter, StoredState } from './types.js'
 import { hashFingerprint, hostnameFingerprint, nodeFingerprinter } from './adapters.js'
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, MACHINE_ID_TIMEOUT_MS, type MachineIdSource } from './machine-id.js'
@@ -216,6 +217,17 @@ describe('status (offline-first)', () => {
     const status = await h.license.status()
     expect(status.state).toBe('licensed')
     expect(h.http.calls).toHaveLength(0) // offline-first: no network on a valid lease
+  })
+
+  it("licenses a typed key whose lease is a trial model's (a trial key issued by hand), offline, never as a device trial", async () => {
+    const h = await harness()
+    const lease = await h.sign('KEY-1', 'trial', 30 * 24 * 3600)
+    h.setStored({ key: 'KEY-1', activationId: 'act_1', lease, checkedMajor: 1, lastSeen: NOW })
+    h.http.fail = true
+    expect(await h.license.status()).toEqual({ state: 'licensed', key: 'KEY-1' })
+    await launchReportSettled(h.license)
+    expect(h.http.calls).toHaveLength(0)
+    expect(h.getStored()).not.toHaveProperty('trialLease')
   })
 
   it('renews online when the lease has expired', async () => {

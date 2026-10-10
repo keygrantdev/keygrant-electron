@@ -184,8 +184,8 @@ export function entitlementSpecials(entOf: (v: Vector) => Record<string, unknown
 const VERDICT = ['lease', 'refused', 'refusedMajor', 'refusedFor', 'backoffSince', 'backoffMs', 'checkedMajor', 'verdictAt']
 /** A trial answer's fields, which a trial answer older than the stored one loses. */
 const TRIAL_ANSWER = ['trialEndsAt', 'trialLease', 'trialAt']
-/** The purchase fields, which a save about a token no longer stored loses. */
-const PURCHASE = ['purchaseToken', 'purchaseTokenAt', 'claimAskedAt']
+/** What an earlier version stored and this one retired (merge.ts RETIRED_FIELDS), which every save leaves out. */
+const RETIRED = ['purchaseToken', 'purchaseTokenAt', 'claimAskedAt']
 
 /** What a merge is based on, and whether that is about the activation stored or another. */
 export function mergeBasis(v: Vector): string {
@@ -193,25 +193,15 @@ export function mergeBasis(v: Vector): string {
   const basis = obj(v.basis)
   const kind = Object.keys(basis)[0] ?? 'unbased'
   if (kind === 'trial') return kind
-  if (kind === 'purchase') {
-    const about = obj(basis.purchase)
-    const latest = obj(v.latest)
-    // A wait carries the purchaseTokenAt its asker read (`at`); a drop carries none.
-    const save = about.at === undefined ? 'purchase drop' : 'purchase wait'
-    if (about.token !== latest.purchaseToken) return `${save}, another token`
-    // Handed out again since: for a wait, another purchaseTokenAt than it read; for a drop, a link whose wait was cleared.
-    const again = about.at === undefined ? latest.claimAskedAt === undefined : about.at !== latest.purchaseTokenAt
-    return `${save}, ${again ? 'the token handed out again' : 'the token stored'}`
-  }
   const about = obj(basis[kind])
   return `${kind}, ${about.activationId === obj(v.latest).activationId ? 'the same activation' : 'another activation'}`
 }
 
-/** What a patch that landed whole does to the purchase fields or the launch report's stamp, if anything. */
-function purchaseNote(patch: Vector): string {
-  if (typeof patch.purchaseToken === 'string') return ', a secret handed out'
-  if (PURCHASE.some((f) => patch[f] === null)) return ', purchase fields cleared'
-  return 'trialReportedAt' in patch ? ', a report stamped' : ''
+/** What else a merge whose patch landed whole did: left out what an earlier version stored, or stamped the launch report. */
+function landedNote(v: Vector): string {
+  const latest = obj(v.latest)
+  if (RETIRED.some((f) => f in latest)) return RETIRED.some((f) => f in obj(v.expect)) ? ', retired fields kept' : ', retired fields left out'
+  return 'trialReportedAt' in obj(v.patch) ? ', a report stamped' : ''
 }
 
 /** Which rule of `merged` a merge shows, by the fields of its patch that did not land as patched. */
@@ -220,13 +210,9 @@ export function mergeOutcome(v: Vector): string {
   const result = obj(v.expect)
   // A cleared field (null) landed when the result has none.
   const dropped = Object.keys(patch).filter((f) => (patch[f] === null ? f in result : JSON.stringify(result[f]) !== JSON.stringify(patch[f])))
-  if (dropped.length === 0) return `landed whole${purchaseNote(patch)}`
-  if (dropped.every((f) => VERDICT.includes(f))) {
-    // The purchase fields are no verdict: they land beside a dropped one.
-    return Object.keys(patch).some((f) => PURCHASE.includes(f)) ? 'verdict dropped, purchase fields cleared' : 'verdict dropped'
-  }
+  if (dropped.length === 0) return `landed whole${landedNote(v)}`
+  if (dropped.every((f) => VERDICT.includes(f))) return 'verdict dropped'
   if (dropped.every((f) => TRIAL_ANSWER.includes(f))) return 'trial answer dropped'
-  if (dropped.every((f) => PURCHASE.includes(f))) return 'purchase fields dropped'
   if (dropped.length === 1 && dropped[0] === 'trialStart') return 'trial start kept earliest'
   if (dropped.length === 1 && dropped[0] === 'keptMajor') return 'kept major kept highest'
   return 'trial evidence only'

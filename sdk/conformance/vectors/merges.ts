@@ -1,10 +1,9 @@
 /** The `merges` group: what of a save lands on a state another process saved meanwhile (offline.ts `merged`). */
-import { ASK_AGAIN_MS, LEASED, NO_PURCHASE, UNKEYED, type Basis } from '../../src/offline.js'
+import { ASK_AGAIN_MS, LEASED, UNKEYED, type Basis } from '../../src/offline.js'
 import type { StoredState } from '../../src/types.js'
 import type { GroupInputs } from '../inputs.js'
 import { encodePatch } from '../replay.js'
 import { AID, DAY_MS, KEY, NOW, clean, type Context } from './common.js'
-import { TOKEN } from './purchases.js'
 
 interface MergeCase {
   name: string
@@ -31,7 +30,7 @@ const LATEST: StoredState = {
 const CURRENT: Basis = { answer: { at: NOW, activationId: AID, seen: NOW - 1000 } }
 
 export function merges(ctx: Context): GroupInputs['merges'][] {
-  const cases = [...answers(), ...trialsAndSeats(ctx), ...reactivations(), ...purchases()]
+  const cases = [...answers(), ...trialsAndSeats(ctx), ...reactivations(), ...retired()]
   return cases.map((m) => ({ name: m.name, latest: clean(m.latest), patch: encodePatch(m.patch), basis: m.basis ?? null }))
 }
 
@@ -141,58 +140,45 @@ function reactivations(): MergeCase[] {
   ]
 }
 
-/** The token another process made meanwhile (`purchases`). */
-const OTHER_TOKEN = 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
-
 /**
- * The purchase token and its stamps: a link's save, a drop and a wait saved
- * about their token (basis `purchase`), what an activation and a deactivation
- * clear of them (NO_PURCHASE), and the launch report's stamp.
+ * What an earlier version of the SDK stored to buy from the app with no key
+ * typed, which this one retired: its purchase secret and the two stamps beside
+ * it, left out of every save (merge.ts RETIRED_FIELDS). And the launch
+ * report's stamp, which lands as any field.
  */
-function purchases(): MergeCase[] {
+function retired(): MergeCase[] {
   const trial: StoredState = { trialStart: NOW - 3 * DAY_MS, trialEndsAt: NOW + 4 * DAY_MS, trialAt: NOW - 5000, lastSeen: NOW }
-  const holding: StoredState = { ...trial, purchaseToken: TOKEN, purchaseTokenAt: NOW - DAY_MS, claimAskedAt: NOW - 60_000 }
-  const replaced: StoredState = { ...holding, purchaseToken: OTHER_TOKEN, purchaseTokenAt: NOW - 1000 }
-  const about: Basis = { purchase: { token: TOKEN } }
-  // The wait after a claim: about the secret as its link was handed out when the claim was asked.
-  const waited: Basis = { purchase: { token: TOKEN, at: NOW - DAY_MS } }
-  const activated = { key: 'SLUICE-BUY1-BUY1-BUY1-BUY1', activationId: 'act_new', lease: 'lease-bought', checkedMajor: 3, ...LEASED, deviceKind: 'machine' as const }
+  // As an earlier version saved them, beside its trial: StoredState no longer names them.
+  const holding = { ...trial, purchaseToken: 'q1w2e3r4t5y6u7i8o9p0a1s2d3f4g5h6j7k8l9z0x1c', purchaseTokenAt: NOW - DAY_MS, claimAskedAt: NOW - 60_000 } as StoredState
+  const activated = { key: 'SLUICE-BUY1-BUY1-BUY1-BUY1', activationId: 'act_new', lease: 'lease-typed', checkedMajor: 3, ...LEASED, deviceKind: 'machine' as const }
+  const keyed = { ...LATEST, purchaseToken: 'q1w2e3r4t5y6u7i8o9p0a1s2d3f4g5h6j7k8l9z0x1c', purchaseTokenAt: NOW - DAY_MS, claimAskedAt: NOW - 60_000 } as StoredState
   return [
-    { name: "a purchase link's save lands whole", latest: trial, patch: { purchaseToken: TOKEN, purchaseTokenAt: NOW, claimAskedAt: undefined } },
-    { name: 'a drop about the token stored clears it', latest: holding, patch: NO_PURCHASE, basis: about },
-    { name: 'the wait after a claim about the token stored lands', latest: holding, patch: { claimAskedAt: NOW }, basis: waited },
-    { name: 'a drop about a token no longer stored leaves the new one', latest: replaced, patch: NO_PURCHASE, basis: about },
-    { name: 'the wait after a claim about a token no longer stored is not saved', latest: replaced, patch: { claimAskedAt: NOW }, basis: waited },
-    { name: 'a drop about a token an activation cleared meanwhile changes nothing', latest: LATEST, patch: NO_PURCHASE, basis: about },
+    { name: "a launch report's stamp lands", latest: trial, patch: { trialReportedAt: NOW } },
+    { name: 'a purchase secret an earlier version stored is left out of any save', latest: holding, patch: { trialReportedAt: NOW } },
     {
-      name: "a bought key's activation clears the purchase fields",
+      name: "a purchase secret an earlier version stored is left out of a trial answer's save",
       latest: holding,
-      patch: { ...activated, ...NO_PURCHASE },
+      patch: { trialEndsAt: NOW + 5 * DAY_MS },
+      basis: { trial: { at: NOW, seen: NOW - 5000 } },
+    },
+    {
+      name: 'a purchase secret an earlier version stored is left out of an activation',
+      latest: holding,
+      patch: activated,
       basis: { activation: { at: NOW, activationId: 'act_new' } },
     },
+    { name: "a purchase secret an earlier version stored is left out of a renewal's save", latest: keyed, patch: { lease: 'lease-new' }, basis: CURRENT },
     {
-      name: 'an activation of the same seat older than the stored verdict still clears the purchase fields',
-      latest: { ...LATEST, purchaseToken: TOKEN, purchaseTokenAt: NOW - DAY_MS },
-      patch: { key: KEY, activationId: AID, lease: 'lease-reactivated', ...NO_PURCHASE },
-      basis: { activation: { at: NOW - 5000, activationId: AID, seen: NOW - 6000 } },
+      name: 'a purchase secret an earlier version stored is left out of an answer about another activation',
+      latest: keyed,
+      patch: { lease: 'lease-old', trialEndsAt: NOW + 2 * DAY_MS },
+      basis: { answer: { at: NOW, activationId: 'act_old', seen: NOW - 1000 } },
     },
     {
-      name: 'a deactivation clears the purchase fields',
-      latest: { ...LATEST, purchaseToken: TOKEN, purchaseTokenAt: NOW - DAY_MS, claimAskedAt: NOW - 1000 },
-      patch: { ...UNKEYED, ...NO_PURCHASE, verdictAt: NOW },
-    },
-    { name: "a launch report's stamp lands", latest: holding, patch: { trialReportedAt: NOW } },
-    {
-      name: "the wait after a claim, the same secret's link handed out again since, is not saved",
-      latest: { ...holding, purchaseTokenAt: NOW - 1000, claimAskedAt: undefined },
-      patch: { claimAskedAt: NOW },
-      basis: waited,
-    },
-    {
-      name: "a drop, the same secret's link handed out again since, still lands",
-      latest: { ...holding, purchaseTokenAt: NOW - 1000, claimAskedAt: undefined },
-      patch: NO_PURCHASE,
-      basis: about,
+      name: 'a purchase secret an earlier version stored is left out of a note about the activation',
+      latest: keyed,
+      patch: { keptMajor: 5 },
+      basis: { about: { activationId: AID } },
     },
   ]
 }

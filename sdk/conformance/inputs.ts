@@ -61,22 +61,6 @@ export interface RenewalVector extends Named {
   device: DeviceView
 }
 
-/** A claim's answer, and what the SDK saves and says of it (`claimOutcome`). */
-export interface ClaimVector extends Named {
-  /** The answer: its HTTP status and its JSON body; null when there was none (it threw or timed out, or no fingerprint could be sent). */
-  response: { status: number; json: unknown } | null
-  /** The offline check of the lease a 200 carried with a key and an activation id (as the leases group's expect, with the claims when ok); null otherwise. */
-  check: LeaseCheck | null
-  /** When the claim was asked, by the device clock: the wait's start (`claimAskedAt`). */
-  clockNow: number
-  /** The time the lease was judged at: the guarded clock, reconciled to the server's. */
-  now: number
-  /** This build's major. */
-  major: number
-  /** What the claim's fingerprint hashes; null for none (a fingerprint of no kind). */
-  kind: DeviceKind | null
-}
-
 /** What a fingerprinter says (`DeviceIdentity`), as a vector carries it: no kind is null. */
 export interface IdentityJson {
   fingerprint: string | null
@@ -99,7 +83,7 @@ export interface GroupInputs {
   /** `leaseEndsAt`: the end the valid trial lease was signed to (its `exp`, ms), null when not known. */
   trialStatuses: Named & { state: StoredState; now: number; leaseValid: boolean; leaseEndsAt: number | null }
   refusalPatches: Named & { refused: Refusal; major: number; device: { ownClaim?: string } }
-  leasePatches: Named & { patch: 'LEASED' | 'UNKEYED' | 'NO_PURCHASE' }
+  leasePatches: Named & { patch: 'LEASED' | 'UNKEYED' }
   keyedBy: Named & { kind: DeviceKind | null }
   /** `patch` as JSON carries a patch: null clears a field. */
   merges: Named & { latest: StoredState; patch: Record<string, unknown>; basis: Basis | null }
@@ -146,26 +130,10 @@ export interface GroupInputs {
    * major type is unsigned (Rust's `u32`) skips it by its value.
    */
   majors: Named & { configured: number | null; jsOnly?: true }
-  /** The link `purchaseUrl` answers for the held purchase secret `secret` (`purchaseLink`: `referencedLink` of its reference). */
-  purchaseUrls: Named & { link: string; secret: string }
-  /** Whether the state's purchase token is still held at `now`, the guarded clock (`purchaseTokenKept`). */
-  purchaseTokenKept: Named & { state: StoredState; now: number }
-  /** Whether `status()` asks the claim, unforced: the link's freshness at `now` (guarded clock), the wait at `clockNow` (device clock) (`claimDue`). */
-  claimDue: Named & { state: StoredState; clockNow: number; now: number }
-  /** A claim's answer body, read (`parseClaimBody`). */
-  parseClaimBody: { body: unknown }
-  /** A claim's answer, and what the SDK saves and says of it (`claimOutcome`). */
-  claimOutcomes: ClaimVector
+  /** `link` with `reference` as its one `client_reference_id` (`referencedLink`), as `upgradeUrl` answers it for the stored activation id. */
+  referencedLinks: Named & { link: string; reference: string }
   /** Whether a running trial reports its launch at `now`, the guarded clock (`trialReportDue`). */
   trialReportDue: Named & { state: StoredState; now: number }
-  /** The reference a payment link carries for the purchase secret `secret` (`purchaseReference`). */
-  purchaseReferences: Named & { secret: string }
-  /**
-   * The body a claim sends (`claimRequest`), or null when none is: the device
-   * read as `deviceFrom(identity, none, deviceHold)` (no install memory: no key
-   * is held), from `startTrial()` (`start`) or from `status()`/`refresh()`.
-   */
-  claimBodies: Named & { secret: string; identity: IdentityJson; deviceHold: boolean; deviceName: string | null; major: number; start: boolean }
   /** A public key's id (`keyId`): the RFC 7638 thumbprint a lease's `kid` names it by. */
   keyIds: Named & { jwk: unknown }
   /** A lease verified at `now` against the key set `keys` (`verifyLease` of `importVerifyingKeys`), and the set's ids. */
@@ -177,8 +145,8 @@ export interface GroupInputs {
 /** A group's name. */
 export type GroupName = keyof GroupInputs
 
-/** The purchase groups, which come after every other group in the file (`replay-purchase.ts`). */
-export type LaterGroup = 'majors' | 'purchaseUrls' | 'purchaseTokenKept' | 'claimDue' | 'parseClaimBody' | 'claimOutcomes' | 'trialReportDue' | 'purchaseReferences' | 'claimBodies'
+/** The groups after the first ones, which come after every other group in the file (`replay-later.ts`). */
+export type LaterGroup = 'majors' | 'referencedLinks' | 'trialReportDue'
 
 /** The key-set groups, which come after the purchase groups (`replay-keys.ts`). */
 export type KeyGroup = 'keyIds' | 'keySets' | 'grants'

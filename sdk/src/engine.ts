@@ -20,9 +20,7 @@ import { graceTimer, parseLeaseBody, withTimeout, type Renewal } from './wire.js
 /**
  * How long past its HTTP bound a call may hold the next one waiting (`serial`):
  * room for the device read and the storage reads and writes around its one
- * request. A call that may make a second, shorter request (`startTrial()`: a
- * claim bounded by STATUS_CHECK_TIMEOUT_MS, then its trial ask) is given that
- * bound on top (`serial`'s `extraMs`).
+ * request.
  */
 export const LOCK_GRACE_MS = 15_000
 
@@ -87,8 +85,7 @@ export abstract class Engine {
    * A call waits for the one before it to settle, but not past the HTTP bound
    * plus LOCK_GRACE_MS from when that one STARTED running (not from when this
    * one was queued, which let a third call overlap a second on a slow network
-   * with nothing stuck; `extraMs` more for a call that may make a second
-   * request). Every request is bounded (`post`), but the storage,
+   * with nothing stuck). Every request is bounded (`post`), but the storage,
    * fingerprint and registry adapters are not: cutting a storage write short
    * could leave it half-written. So a call stuck on one is left to finish on
    * its own, and the calls behind it go ahead READ-ONLY (`readOnly` true): they
@@ -99,7 +96,7 @@ export abstract class Engine {
    * storage interface has no compare-and-set to refuse it. Not writing is the
    * only way a late write cannot undo anything.
    */
-  protected serial<T>(work: (readOnly: boolean) => Promise<T>, extraMs = 0): Promise<T> {
+  protected serial<T>(work: (readOnly: boolean) => Promise<T>): Promise<T> {
     const prev = this.last
     let markStarted: (value: { graceOver: Promise<void> }) => void = () => undefined
     const started = new Promise<{ graceOver: Promise<void> }>((resolve) => {
@@ -112,7 +109,7 @@ export abstract class Engine {
       await Promise.race([prev.settled, graceOver])
       const readOnly = this.writing > 0
       if (!readOnly) this.writing += 1
-      const grace = graceTimer(this.httpTimeoutMs + LOCK_GRACE_MS + extraMs)
+      const grace = graceTimer(this.httpTimeoutMs + LOCK_GRACE_MS)
       markStarted({ graceOver: grace.over })
       try {
         return await work(readOnly)
@@ -143,7 +140,7 @@ export abstract class Engine {
 
   /**
    * The ids of the keys this build carries (`kid`, each key's thumbprint), in
-   * the order configured: sent with each activation, validate and claim
+   * the order configured: sent with each activation and validate
    * (`kids`), so the product's dashboard can count the devices whose builds
    * do not carry a key yet.
    */

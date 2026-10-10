@@ -10,7 +10,7 @@
  * and the set of outcomes over the group must be exactly the one listed.
  */
 import type { FirstGroup, GroupName } from './inputs.js'
-import { LATER_COVERAGE } from './coverage-purchase.js'
+import { LATER_COVERAGE } from './coverage-later.js'
 import { KEY_COVERAGE } from './coverage-keys.js'
 import {
   answer,
@@ -220,7 +220,7 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
       expect: ['device', 'device, for nobody', 'outdated', 'revoked', 'upgrade'],
     },
   },
-  leasePatches: { patch: { of: (v) => String(v.patch), expect: ['LEASED', 'NO_PURCHASE', 'UNKEYED'] } },
+  leasePatches: { patch: { of: (v) => String(v.patch), expect: ['LEASED', 'UNKEYED'] } },
   keyedBy: { keyed: { of: (v) => ('deviceKind' in obj(v.expect) ? 'keyed' : 'not keyed'), expect: ['keyed', 'not keyed'] } },
   merges: {
     landed: {
@@ -229,28 +229,23 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
         'about, another activation: trial evidence only',
         'about, the same activation: kept major kept highest',
         'about, the same activation: landed whole',
+        'about, the same activation: landed whole, retired fields left out',
         'activation, another activation: landed whole',
-        'activation, another activation: landed whole, purchase fields cleared',
+        'activation, another activation: landed whole, retired fields left out',
         'activation, the same activation: landed whole',
         'activation, the same activation: verdict dropped',
-        'activation, the same activation: verdict dropped, purchase fields cleared',
         'answer, another activation: trial evidence only',
+        'answer, another activation: verdict dropped',
         'answer, the same activation: kept major kept highest',
         'answer, the same activation: landed whole',
+        'answer, the same activation: landed whole, retired fields left out',
         'answer, the same activation: verdict dropped',
-        'purchase drop, another token: landed whole, purchase fields cleared',
-        'purchase drop, another token: purchase fields dropped',
-        'purchase drop, the token handed out again: landed whole, purchase fields cleared',
-        'purchase drop, the token stored: landed whole, purchase fields cleared',
-        'purchase wait, another token: purchase fields dropped',
-        'purchase wait, the token handed out again: purchase fields dropped',
-        'purchase wait, the token stored: landed whole',
         'trial: landed whole',
+        'trial: landed whole, retired fields left out',
         'trial: trial answer dropped',
         'unbased: landed whole',
         'unbased: landed whole, a report stamped',
-        'unbased: landed whole, a secret handed out',
-        'unbased: landed whole, purchase fields cleared',
+        'unbased: landed whole, retired fields left out',
         'unbased: trial start kept earliest',
       ],
     },
@@ -346,5 +341,5 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
   },
 }
 
-/** Every group's facets: the first groups', then the purchase groups' (`coverage-purchase.ts`). */
+/** Every group's facets: the first groups', then the later groups' (`coverage-later.ts`), then the key-set groups' (`coverage-keys.ts`). */
 export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE }

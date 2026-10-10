@@ -19,7 +19,6 @@
 import { entitlementsOf, fingerprintClaim, verifyLease, type LeaseClaims, type VerifyResult, type VerifyingKey } from '@keygrant/shared'
 import {
   LEASED,
-  NO_PURCHASE,
   UNKEYED,
   askDue,
   checkLease,
@@ -42,7 +41,7 @@ import { machineIdFilesystem, readMachineId } from '../src/machine-id.js'
 import { deviceFrom, type Device } from '../src/device.js'
 import type { DeviceIdentity, DeviceKind, StoredState } from '../src/types.js'
 import type { FirstGroup, GroupInputs, GroupName, IdentityJson } from './inputs.js'
-import { LATER } from './replay-purchase.js'
+import { LATER } from './replay-later.js'
 import { KEYS } from './replay-keys.js'
 import { scripted } from './scripted.js'
 
@@ -201,7 +200,7 @@ const FIRST: { [G in FirstGroup]: Group<GroupInputs[G]> } = {
   },
   leasePatches: {
     outputs: ['expect'],
-    answer: (i) => ({ expect: encodePatch(i.patch === 'LEASED' ? LEASED : i.patch === 'UNKEYED' ? UNKEYED : NO_PURCHASE) }),
+    answer: (i) => ({ expect: encodePatch(i.patch === 'LEASED' ? LEASED : UNKEYED) }),
   },
   keyedBy: {
     outputs: ['expect'],
@@ -335,7 +334,7 @@ const FIRST: { [G in FirstGroup]: Group<GroupInputs[G]> } = {
   },
 }
 
-/** Every group: the first ones, then the purchase groups (`replay-purchase.ts`), then the key-set groups (`replay-keys.ts`), in the order of the file. */
+/** Every group: the first ones, then the later ones (`replay-later.ts`), then the key-set groups (`replay-keys.ts`), in the order of the file. */
 export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS }
 
 /**

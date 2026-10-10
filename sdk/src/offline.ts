@@ -4,7 +4,7 @@
  * shows, which refusal still stands, and when to ask the server again.
  */
 import type { Entitlements, LeaseClaims, VerifyResult } from '@keygrant/shared'
-import type { LicenseStatus, Refusal, StoredState } from './types.js'
+import type { DeviceKind, LicenseStatus, Refusal, StoredState } from './types.js'
 import type { Device } from './device.js'
 import { entitled, sameKey } from './wire.js'
 
@@ -34,32 +34,6 @@ export const ASK_AGAIN_MS = 60 * 60_000
 export const RETRY_UNANSWERED_MS = 60_000
 
 /**
- * How long after a claim ask that brought no key back (`claimAskedAt`) before
- * `status()` asks again on its own (`claimDue`): a customer back from the
- * checkout finds the app licensed within minutes, and a device with a purchase
- * secret held does not ask on every `status()`. `refresh()` and `startTrial()`
- * ask at once.
- */
-export const CLAIM_WAIT_MS = 5 * 60_000
-
-/**
- * How long after `purchaseUrl` last handed a link out (`purchaseTokenAt`) an
- * unforced `status()` still asks the claim (`claimDue`): a customer who buys
- * does so soon after opening the link. After it, only `refresh()` and
- * `startTrial()` ask, until PURCHASE_TOKEN_MS, so an abandoned checkout does not
- * put the network in front of every launch.
- */
-export const CLAIM_EAGER_MS = DAY_MS
-
-/**
- * How long a purchase secret is held after `purchaseUrl` last handed out its
- * link (`purchaseTokenKept`, by the guarded clock): a checkout left that long
- * is not coming back, and a secret past it is dropped, never sent. A drop is
- * the device's alone: it revokes nothing on the server.
- */
-export const PURCHASE_TOKEN_MS = 30 * DAY_MS
-
-/**
  * How often, at most, a running trial reports its launch (trials.ts
  * `trialReportDue`), a trial answer (`trialAt`) counting as one.
  */
@@ -75,8 +49,8 @@ export const RENEW_WITHIN_MS = 7 * 24 * 60 * 60_000
 /**
  * The major a build runs as: the configured one, read as the server reads a
  * version (0.x as 1, and majors from 1 up). So a build configured as major 0 is
- * major 1 everywhere the SDK uses the major (sent with `activate`, `validate`
- * and `claim`, and judged by `checkLease`, `keptWith` and `standingRefusal`),
+ * major 1 everywhere the SDK uses the major (sent with `activate` and
+ * `validate`, and judged by `checkLease`, `keptWith` and `standingRefusal`),
  * rather than refused offline as `outdated` by every lease. Absent is 1, a
  * fraction is cut to its whole part first, and a value that is not a finite
  * number is 1.
@@ -298,16 +272,37 @@ export const LEASED: Partial<StoredState> = {
   backoffMs: undefined,
 }
 
+/** An activation the server answered with a lease that licenses this build (`activationPatch`). */
+export interface Activation {
+  key: string
+  activationId: string
+  lease: string
+  /** The lease's claims. */
+  claims: LeaseClaims
+  /** The time the lease was judged at. */
+  now: number
+  /** This build's major. */
+  major: number
+  /** What the activation's fingerprint hashes: none for one of unknown kind. */
+  kind?: DeviceKind
+}
+
 /**
- * What an activation (typed, or a bought key picked up) and a deactivation
- * clear: the purchase secret and its stamps. A secret left on a keyed install
- * would, after a later deactivation, activate the device on a key the
- * customer may have meant for another machine.
+ * What an activation saves (license.ts), stamped as an activation: the key,
+ * the activation, the lease, the major heard, the kept major (`keptWith`), any
+ * refusal and wait cleared (LEASED), and what the install is keyed by
+ * (cleared for a fingerprint of unknown kind).
  */
-export const NO_PURCHASE: Partial<StoredState> = {
-  purchaseToken: undefined,
-  purchaseTokenAt: undefined,
-  claimAskedAt: undefined,
+export function activationPatch(a: Activation): Partial<StoredState> {
+  return {
+    key: a.key,
+    activationId: a.activationId,
+    lease: a.lease,
+    checkedMajor: a.major,
+    keptMajor: keptWith(undefined, a.claims, a.now, a.major),
+    ...LEASED,
+    deviceKind: a.kind,
+  }
 }
 
 /** What a deactivated device keeps of its licence: nothing but its trial evidence and clock guard. */

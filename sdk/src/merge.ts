@@ -37,18 +37,6 @@ export interface Basis {
   about?: { activationId?: string }
   /** The server's answer to a trial ask: stamped `trialAt`. */
   trial?: Stamp
-  /**
-   * A save about a purchase secret (`token`: its drop, or the wait after a
-   * claim ask): its purchase fields (PURCHASE_FIELDS) land only while that
-   * secret is the one stored, so one another process made meanwhile is
-   * neither dropped nor stamped by it. A wait carries the `purchaseTokenAt`
-   * its asker read (`at`), and lands only while that is stored too: a link
-   * handed out again since (another process's `purchaseUrl`) cleared the wait
-   * so that the next `status()` asks at once, and a late answer must not
-   * start it again. A drop carries none: a spent secret is dead however
-   * recently its link was handed out.
-   */
-  purchase?: { token: string; at?: number }
 }
 
 /** What the answer to an ask writes: what the server said, and the wait before asking again. */
@@ -66,8 +54,12 @@ const VERDICT_FIELDS = [
 /** A server trial answer, taken whole from the newest one (`trialAt`): the end and the lease that says it. */
 const TRIAL_ANSWER_FIELDS = ['trialEndsAt', 'trialLease', 'trialAt'] as const
 
-/** The purchase token and its stamps, which a save about a token writes only while it is stored (`Basis.purchase`). */
-const PURCHASE_FIELDS = ['purchaseToken', 'purchaseTokenAt', 'claimAskedAt'] as const
+/**
+ * What an earlier version of the SDK stored to buy from the app with no key
+ * typed (its purchase secret and the two stamps beside it). This one neither
+ * reads nor keeps them: every save leaves them out (`merged`).
+ */
+const RETIRED_FIELDS = ['purchaseToken', 'purchaseTokenAt', 'claimAskedAt'] as const
 
 /** The trial evidence, which belongs to the device, not to any activation. */
 const TRIAL_FIELDS = ['trialStart', ...TRIAL_ANSWER_FIELDS] as const
@@ -114,10 +106,11 @@ export function trialOnly(patch: Partial<StoredState>): Partial<StoredState> {
   return kept
 }
 
-/** Whether a save about a purchase secret is about the one stored, as handed out when its asker read it (`Basis.purchase`). */
-function aboutStored(latest: StoredState, purchase: { token: string; at?: number }): boolean {
-  if (latest.purchaseToken !== purchase.token) return false
-  return purchase.at === undefined || latest.purchaseTokenAt === purchase.at
+/** `state` without what an earlier version stored and this one retired (RETIRED_FIELDS). */
+function withoutRetired(state: StoredState): StoredState {
+  const rest: Record<string, unknown> = { ...state }
+  for (const field of RETIRED_FIELDS) delete rest[field]
+  return rest as StoredState
 }
 
 /** How out of date a save is by what it is based on (`merged`): see `superseded`. */
@@ -142,11 +135,10 @@ function outOfDate(latest: StoredState, basis: Basis): 'activation' | 'answer' |
  * stored one loses its verdict fields, as does an activation of the same seat;
  * a trial answer older than the stored one loses its end and lease, taken
  * together from the newest (min-merging the end would refuse a trial the server
- * extended); a save about a purchase secret no longer stored (or, for a wait,
- * one handed out again since) loses its purchase fields. The trial start only
- * ever moves earlier, whoever saved it; the kept major of the stored activation
- * only ever up, whoever noted it (a deactivation, based on nothing, still
- * clears it).
+ * extended). The trial start only ever moves earlier, whoever saved it; the
+ * kept major of the stored activation only ever up, whoever noted it (a
+ * deactivation, based on nothing, still clears it). What an earlier version
+ * stored and this one retired (RETIRED_FIELDS) is left out of every save.
  */
 export function merged(latest: StoredState, patch: Partial<StoredState>, basis: Basis = {}): StoredState {
   const stamp = basis.answer ?? basis.activation
@@ -159,9 +151,8 @@ export function merged(latest: StoredState, patch: Partial<StoredState>, basis: 
   if (state === 'activation') applied = trialOnly(applied)
   if (state === 'answer') applied = withoutVerdict(applied)
   if (basis.trial && outdated(latest.trialAt, basis.trial)) applied = omit(applied, TRIAL_ANSWER_FIELDS)
-  if (basis.purchase && !aboutStored(latest, basis.purchase)) applied = omit(applied, PURCHASE_FIELDS)
   const trialStart = earliest(latest.trialStart, applied.trialStart)
-  const result: StoredState = { ...latest, ...applied, ...(trialStart !== undefined ? { trialStart } : {}) }
+  const result = withoutRetired({ ...latest, ...applied, ...(trialStart !== undefined ? { trialStart } : {}) })
   return keptHighest(result, latest, applied, stamp ?? basis.about)
 }
 

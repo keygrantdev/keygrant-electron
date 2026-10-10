@@ -109,35 +109,6 @@ export function parseTrialBody(json: unknown): { trialStart: number; trialEndsAt
   return { trialStart: b.trialStart, trialEndsAt: b.trialEndsAt, lease: typeof b.lease === 'string' ? b.lease : undefined }
 }
 
-/** A claim's answer (`parseClaimBody`): what of each member it can use. */
-export interface ClaimBody {
-  key?: string
-  activationId?: string
-  lease?: string
-  /** "Not bought yet": only a `pending` that is `true`. */
-  pending?: true
-  /** The answer's error word: only a string of at least one character. */
-  error?: string
-}
-
-/**
- * A claim's answer, keeping each member only when it is what it should be:
- * the key, the activation id and the lease when they are strings, `pending`
- * when it is `true`, the error when it is a word. Members it does not know are
- * ignored, and a body that is not an object is nothing.
- */
-export function parseClaimBody(json: unknown): ClaimBody {
-  if (typeof json !== 'object' || json === null) return {}
-  const b = json as Record<string, unknown>
-  return {
-    ...(typeof b.key === 'string' ? { key: b.key } : {}),
-    ...(typeof b.activationId === 'string' ? { activationId: b.activationId } : {}),
-    ...(typeof b.lease === 'string' ? { lease: b.lease } : {}),
-    ...(b.pending === true ? { pending: true as const } : {}),
-    ...(typeof b.error === 'string' && b.error !== '' ? { error: b.error } : {}),
-  }
-}
-
 /** Smallest defined timestamp, or undefined if none given. */
 export function earliest(...values: Array<number | undefined>): number | undefined {
   const defined = values.filter((v): v is number => v != null)

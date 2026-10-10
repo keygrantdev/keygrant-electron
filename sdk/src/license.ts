@@ -1,19 +1,18 @@
 import type { LeaseClaims } from '@keygrant/shared'
-import type { ActivateResult, DeactivateResult, LicenseStatus, Refusal, StoredState } from './types.js'
-import { PurchaseEngine } from './purchases.js'
+import type { ActivateResult, DeactivateResult, LicenseConfig, LicenseStatus, Refusal, StoredState } from './types.js'
+import { TrialEngine } from './trials.js'
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
 import { activationIdentity } from './device.js'
-import { NO_PURCHASE, UNKEYED, sameKey, askDue, heldElsewhere, keptWith, leaseStatus, standingRefusal } from './offline.js'
-import { absoluteLink, activationPatch, referencedLink } from './pickup.js'
+import { UNKEYED, activationPatch, sameKey, askDue, heldElsewhere, keptWith, leaseStatus, standingRefusal } from './offline.js'
+import { referencedLink } from './link.js'
 import { asksOnValidLease } from './renewal.js'
-import { STATUS_CHECK_TIMEOUT_MS, enteredKey, errorOf, mapServerError, parseLeaseBody } from './wire.js'
+import { MAX_DEVICE_NAME, STATUS_CHECK_TIMEOUT_MS, enteredKey, errorOf, mapServerError, parseLeaseBody, trimToLength } from './wire.js'
 import { MissingEntitlementError, grants } from './entitlements.js'
 
 /**
  * Client-side licensing for desktop apps. Verifies signed JWT leases OFFLINE and only contacts the
- * server to activate, to renew a lease nearing its end or past it, to tell it of a newer major, to
- * pick up a key bought through `purchaseUrl()`, or to report a running trial's launch (at most once
- * a day), so a transient outage never locks out a paying customer while the lease is live (the
+ * server to activate, to renew a lease nearing its end or past it, to tell it of a newer major, or
+ * to report a running trial's launch (at most once a day), so a transient outage never locks out a paying customer while the lease is live (the
  * grace window is the lease's lifetime). Trial start is anti-reset (only moves earlier) and a
  * monotonic clock guard prevents rewinding time to resurrect expired leases.
  *
@@ -28,15 +27,26 @@ import { MissingEntitlementError, grants } from './entitlements.js'
  *  - a trial whose lease does not verify here while its stored end is still
  *    ahead (a lease signed before the product's key was rotated, say): the
  *    trial is asked for again, bounded by STATUS_CHECK_TIMEOUT_MS (`healTrial`);
- *  - no key held and a purchase secret held (`purchaseUrl`): the key bought
- *    with it is asked for (`claim`) for a day after the link was handed out
- *    (CLAIM_EAGER_MS), once CLAIM_WAIT_MS has passed since the last ask, and
- *    only under this device's own fingerprint, bounded by
- *    STATUS_CHECK_TIMEOUT_MS (`pickUp`);
  *  - a running trial: its launch reported, at most once a day, in the
  *    background and never awaited (trials.ts `reportLaunch`).
  */
-export class License extends PurchaseEngine {
+export class License extends TrialEngine {
+  /** The device name an activation reports, cut to what the server takes. */
+  private readonly deviceName?: string
+
+  constructor(config: LicenseConfig) {
+    super(config)
+    /**
+     * TRUNCATED, because the integrating app supplies it.
+     *
+     * The activate endpoint bounds every string it takes (it is public and
+     * unauthenticated), so a long device name would turn a first activation into
+     * a 400, which the SDK maps to `network`. The name is a label in a device
+     * list; cutting it is better than refusing the activation it is attached to.
+     */
+    this.deviceName = trimToLength(config.deviceName, MAX_DEVICE_NAME)
+  }
+
   // --- public API ------------------------------------------------------------
 
   /** Activate a license key on this device. */
@@ -62,29 +72,6 @@ export class License extends PurchaseEngine {
     const { key, activationId } = await this.load(true)
     if (!key || !activationId) return null
     return referencedLink(paymentLinkUrl, activationId)
-  }
-
-  /**
-   * `paymentLinkUrl` with a PURCHASE REFERENCE as its `client_reference_id`,
-   * or null while the device holds a key (any key: use `upgradeUrl`, or the
-   * plain link). Send a customer with no key there to buy: the checkout keeps
-   * the reference on the key it mints, and once they are back the SDK asks for
-   * that key (at once on `refresh()` or `startTrial()`, and from `status()` for
-   * a day after the link), activates this device on it and answers licensed,
-   * with nothing typed.
-   *
-   * The reference is a hash of a one-time secret (256 random bits, never the
-   * fingerprint) that stays on the device and is sent only in that ask, so a
-   * link that leaks claims nothing. The secret is made the first time, kept,
-   * and its link handed out again by every later call; it is dropped 30 days
-   * after the last one (PURCHASE_TOKEN_MS), or once a key bought with it is
-   * picked up. Rejects when the link is not an absolute URL (before anything is
-   * read), when the state cannot be read, or when the secret cannot be saved: a
-   * link whose secret is not kept could never be picked up.
-   */
-  async purchaseUrl(paymentLinkUrl: string): Promise<string | null> {
-    absoluteLink(paymentLinkUrl)
-    return this.serial((readOnly) => this.purchaseUrlNow(paymentLinkUrl, readOnly))
   }
 
   /**
@@ -160,21 +147,13 @@ export class License extends PurchaseEngine {
    * state cannot be read, and the server's trial when it cannot be saved.
    */
   startTrial(): Promise<LicenseStatus> {
-    // It may make two requests (a claim bounded by STATUS_CHECK_TIMEOUT_MS, then
-    // the trial ask): the calls behind it wait that much longer (engine.ts `serial`).
     return this.serial(async (readOnly) => {
       const state = await this.loadForStatus(readOnly)
       if (!state) return readOnly ? { ...UNREADABLE, stalled: true } : { ...UNREADABLE }
-      if (!readOnly) {
-        // The device read once, given an activation's time, for both asks.
-        const device = await this.device(ACTIVATE_MACHINE_ID_TIMEOUT_MS, state.deviceKind)
-        // A key bought through `purchaseUrl` is asked for first; bought, it is the answer, and no trial is asked.
-        const picked = await this.pickUp(state, { start: true, force: true, device })
-        return 'status' in picked ? picked.status : this.startTrialNow(picked.state, device)
-      }
+      if (!readOnly) return this.startTrialNow(state)
       // From storage behind a call that has not finished, and saying so, as status() does.
       return { ...(await this.trialStatus(state, this.effectiveNow(state))), stalled: true }
-    }, STATUS_CHECK_TIMEOUT_MS)
+    })
   }
 
   // --- internals -------------------------------------------------------------
@@ -212,9 +191,6 @@ export class License extends PurchaseEngine {
     const evaluated = await this.evaluate(lease, now, { key: entered, activationId, deviceKind: kind })
     if (!evaluated.ok) return { ok: false, error: 'invalid-lease' }
 
-    // As a bought key's claim saves one (pickup.ts `activationPatch`), the
-    // purchase secret cleared too: else a later deactivate would let a pending
-    // pickup activate the device again.
     const patch = activationPatch({ key: entered, activationId, lease, claims: evaluated.claims, now, major: this.major, kind })
     await this.save(patch, undefined, { activation: { at: askedAt, activationId, seen: stored.verdictAt } })
     return { ok: true }
@@ -237,7 +213,7 @@ export class License extends PurchaseEngine {
       }
     }
     // Stamped (`verdictAt`) so that an answer to an older ask is not saved over it.
-    await this.save({ ...UNKEYED, ...NO_PURCHASE, verdictAt: this.effectiveNow(state) })
+    await this.save({ ...UNKEYED, verdictAt: this.effectiveNow(state) })
     return { released }
   }
 
@@ -268,10 +244,7 @@ export class License extends PurchaseEngine {
     if (refused && readOnly) return { state: 'invalid', reason: refused, key: state.key }
     if (refused) return this.refusedStatus(state, refused, forceOnline)
     if (state.key && state.lease) return this.licenseStatus(state, state.lease, now, forceOnline, readOnly)
-    // No licence held: a key bought through `purchaseUrl` is picked up first (`pickUp`), never read-only.
-    const picked = readOnly ? { state } : await this.pickUp(state, { start: false, force: forceOnline })
-    if ('status' in picked) return picked.status
-    if (picked.state.trialStart != null) return this.trialStatus(picked.state, now, { forceOnline, readOnly })
+    if (state.trialStart != null) return this.trialStatus(state, now, { forceOnline, readOnly })
     return { state: 'unlicensed' }
   }
 
