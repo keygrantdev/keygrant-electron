@@ -39,16 +39,41 @@ const tsc = require.resolve('typescript/bin/tsc')
 const work = mkdtempSync(join(tmpdir(), 'keygrant-package-'))
 
 // One app that uses the public surface: a constructor, a method, and types,
-// the entitlements a status carries included (the lease format's own type,
-// which the declarations take from the bundled copy of shared).
-const APP = `import { License, type Entitlement, type Entitlements, type LicenseStatus } from '@keygrant/electron'
+// the entitlements a status carries and a licence file's kind included (the
+// lease format's own types, which the declarations take from the bundled copy
+// of shared).
+const APP = `import {
+  License,
+  LICENSE_FILE_EXTENSION,
+  type Entitlement,
+  type Entitlements,
+  type ImportLicenseFileResult,
+  type LicensedTo,
+  type LicenseFileError,
+  type LicenseFileKind,
+  type LicenseStatus,
+} from '@keygrant/electron'
 
 const license = new License({
   product: 'my-product',
   apiBaseUrl: 'https://api.keygrant.dev',
   publicJwk: { kty: 'OKP', crv: 'Ed25519', x: 'x' },
   major: 1,
+  revokedLicenseFiles: ['lf_1'],
 })
+
+export const extension: string = LICENSE_FILE_EXTENSION
+
+export async function importFile(bytes: Uint8Array): Promise<[LicenseFileKind, LicensedTo] | string> {
+  const result: ImportLicenseFileResult = await license.importLicenseFile(bytes)
+  return result.ok ? [result.kind, result.licensedTo] : result.error
+}
+
+export async function removeFile(): Promise<void> {
+  await license.removeLicenseFile()
+}
+
+export const refused: LicenseFileError = 'revoked-file'
 
 export async function state(): Promise<LicenseStatus['state']> {
   return (await license.status()).state

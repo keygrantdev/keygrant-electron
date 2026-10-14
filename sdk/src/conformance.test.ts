@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { importVerifyingKeys } from '@keygrant/shared'
 import { generate, VECTORS_PATH } from '../conformance/generate.js'
 import { GROUPS } from '../conformance/replay.js'
+import { FILES } from '../conformance/replay-files.js'
 import { COVERAGE } from '../conformance/coverage.js'
+import { FILE_COVERAGE } from '../conformance/coverage-files.js'
 
 /**
  * `conformance/vectors.json` is what every KeyGrant SDK must answer, taken from
@@ -38,11 +40,11 @@ describe('the SDK conformance vectors', () => {
     const file = committed()
     const key = await importVerifyingKeys([file.publicJwk as JsonWebKey])
     const mismatches: string[] = []
-    for (const [name, spec] of Object.entries(GROUPS)) {
+    for (const [name, group] of Object.entries(GROUPS)) {
       for (const vector of file[name] as Vector[]) {
-        const inputs = Object.fromEntries(Object.entries(vector).filter(([field]) => !spec.outputs.includes(field)))
-        const answered = JSON.parse(JSON.stringify(await spec.answer(inputs, key))) as Record<string, unknown>
-        for (const field of spec.outputs) {
+        const inputs = Object.fromEntries(Object.entries(vector).filter(([field]) => !group.outputs.includes(field)))
+        const answered = JSON.parse(JSON.stringify(await group.answer(inputs, key))) as Record<string, unknown>
+        for (const field of group.outputs) {
           if (JSON.stringify(answered[field]) !== JSON.stringify(vector[field])) mismatches.push(`${name}: ${vector.name ?? JSON.stringify(inputs)}`)
         }
       }
@@ -59,10 +61,10 @@ describe('the SDK conformance vectors', () => {
 
   it('cover every outcome of every group, so no vector that is the only one to show one can go unnoticed', () => {
     /**
-     * Each group's facets (`conformance/coverage.ts`) map a vector to the
-     * outcome it shows; the set over the group must be exactly the one
-     * listed. Deleting the only test licence, the only expired lease that
-     * keeps its claims, an error word, or one platform's machine ids
+     * Each group's facets (`conformance/coverage.ts`, `coverage-files.ts`) map
+     * a vector to the outcome it shows; the set over the group must be exactly
+     * the one listed. Deleting the only test licence, the only expired lease
+     * that keeps its claims, an error word, or one platform's machine ids
      * regenerates a file the first test accepts, and fails here.
      */
     const file = committed()
@@ -84,11 +86,30 @@ describe('the SDK conformance vectors', () => {
     // reads it as a field, and pass for a port that answers nothing.
     const file = committed()
     const missing: string[] = []
-    for (const [name, spec] of Object.entries(GROUPS)) {
+    for (const [name, group] of Object.entries(GROUPS)) {
       for (const vector of file[name] as Vector[]) {
-        for (const field of spec.outputs) if (!(field in vector)) missing.push(`${name}: ${vector.name ?? JSON.stringify(vector)} has no ${field}`)
+        for (const field of group.outputs) if (!(field in vector)) missing.push(`${name}: ${vector.name ?? JSON.stringify(vector)} has no ${field}`)
       }
     }
     expect(missing).toEqual([])
+  })
+})
+
+describe('the licence-file vectors', () => {
+  it('are the last groups of the file, in their order, so every group before them is as it was', () => {
+    const file = committed()
+    const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
+    expect(groups.slice(-3)).toEqual(Object.keys(FILES))
+  })
+
+  it('tell every vector apart by its rule, so deleting any one of them fails the coverage', () => {
+    const file = committed() as Record<string, Vector[] | undefined>
+    for (const [name, facets] of Object.entries(FILE_COVERAGE)) {
+      const rule = facets.rule ?? facets.outcome
+      const vectors = file[name]
+      if (rule === undefined || vectors === undefined) throw new Error(`${name}: no rule facet, or no vectors in the file`)
+      expect(vectors.length, name).toBeGreaterThan(0)
+      expect(new Set(vectors.map((v) => rule.of(v))).size, name).toBe(vectors.length)
+    }
   })
 })

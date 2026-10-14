@@ -83,7 +83,7 @@ export interface LeaseHolder {
  * not a lease for this licence at all. Nor one for another device (`fp`, when
  * the lease carries it: one with no device claim is taken until its renewal
  * brings it): that is `device`, since the honest case is a machine that changed
- * (an OS reinstall, new hardware) as well as a licence file copied from
+ * (an OS reinstall, new hardware) as well as a state file copied from
  * elsewhere, and either way the fix is to activate on this one. Only a lease
  * whose seat is keyed by a machine id (`fpk`) is judged so: a host name changes
  * with a rename or an architecture switch, and an honest device must never be

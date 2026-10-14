@@ -21,7 +21,7 @@
 import { deepStrictEqual } from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { importVerifyingKeys, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
+import { importVerifyingKeys, MAX_LICENSE_FILE_BYTES, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
 import { ASK_AGAIN_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS, TRIAL_REPORT_MS } from '../src/offline.js'
 import { CLOCK_TOLERANCE_MS } from '../src/clock.js'
 import { MAX_DEVICE_NAME, MAX_KEY, STATUS_CHECK_TIMEOUT_MS } from '../src/wire.js'
@@ -30,7 +30,7 @@ import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, BOOT_SLACK_MS, MACHINE_ID_TIMEOUT_MS } 
 import { LOCK_GRACE_MS } from '../src/engine.js'
 import { UPDATE_ATTEMPTS } from '../src/storage.js'
 import type { GroupInputs, GroupName } from './inputs.js'
-import { GROUPS } from './replay.js'
+import { GROUPS, type Group } from './replay.js'
 import { TEST_PUBLIC_JWK, context, type Context } from './vectors/common.js'
 import { leases } from './vectors/leases.js'
 import { trials } from './vectors/trials.js'
@@ -45,6 +45,7 @@ import { leaseStatuses, trialLeaseStatuses } from './vectors/statuses.js'
 import { entitlementNumbers } from './vectors/numbers.js'
 import { referencedLinks, trialReportDue } from './vectors/later.js'
 import { grants, keyIds, keySets } from './vectors/keys.js'
+import { filesAsLeases, licenseFileContainers, licenseFiles } from './vectors/files.js'
 
 export { TEST_PRIVATE_JWK, TEST_PUBLIC_JWK } from './vectors/common.js'
 
@@ -90,10 +91,13 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   keyIds,
   keySets,
   grants,
+  licenseFileContainers,
+  licenseFiles,
+  filesAsLeases,
 }
 
 const COMMENT =
-  'Generated from the KeyGrant Electron SDK (the reference). Every KeyGrant SDK must reproduce every answer: "expect", and also "verify", "claim" and "fingerprint". Signed with a TEST-ONLY key. Do not edit; regenerate.'
+  'Generated from the KeyGrant Electron SDK (the reference). Every KeyGrant SDK must reproduce every answer: "expect", and also "verify", "claim", "fingerprint", "kids", "status" and "trial". Signed with TEST-ONLY keys. Do not edit; regenerate.'
 
 const CONVENTIONS = [
   'Times are milliseconds since the epoch; lease claims (iat, exp, upgradeUntil) are seconds.',
@@ -114,6 +118,9 @@ const CONVENTIONS = [
   'publicJwk is the key set of one every group but keySets verifies with: a lease naming no key (kid) is verified by it, one naming its id too, and one naming another id is unknown-key.',
   'keyIds.expect is the id a lease names a key by: the base64url (no padding) of the SHA-256 of {"crv":"Ed25519","kty":"OKP","x":"<x>"}, its RFC 7638 thumbprint, or null for a JWK every SDK refuses: one that is not an object, whose kty is not OKP or crv not Ed25519 (both required), that holds d, whose use (when given) is not sig, whose key_ops (when given) are not a list naming verify, whose alg (when given) is neither EdDSA nor Ed25519, or whose x, its trailing = dropped, is not canonical base64url of 32 bytes. No other member is read. keySets.kids are the ids of keys, in the order given, a key given twice kept once; keySets.verify is the lease verified against that set at now, as leases.verify.',
   "grants.expect: whether ent, read as a lease's ent is read, grants code: a flag that is true, a number that is not 0, a text that is not empty; the code matched exactly.",
+  "licenseFileContainers.bytes is a file's content as canonical base64url (no padding); expect is the token it holds (licenseFileToken), or null when it is no licence file's container.",
+  "licenseFiles: token verified against the key set keys (verifyLicenseFile; keys read as keySets.keys are), judged for product, the build's major and the denylist revoked (checkLicenseFile: expect is {ok, kind, test} or {ok, reason}); status is the status it gives when stored (licenseFileStatus). verify.claims are the claims as parsed: an offline file's ent read leniently, a key file's versions and entitlements not read.",
+  "filesAsLeases: a licence file given where a lease goes, verified against publicJwk and judged as leases judges a lease (holder: this licence's key and activation, on a run that cannot tell its device), and as a trial lease for the same device (trial: trialLeaseValid).",
 ]
 
 export async function generate() {
@@ -121,7 +128,7 @@ export async function generate() {
   const ctx = await context()
   const groups: Record<string, unknown[]> = {}
   for (const group of Object.keys(GROUPS) as GroupName[]) {
-    groups[group] = await answered(group, await BUILDERS[group](ctx), verifying)
+    groups[group] = await answered(group, GROUPS[group], await BUILDERS[group](ctx), verifying)
   }
   return {
     $comment: COMMENT,
@@ -146,6 +153,7 @@ export async function generate() {
       UPDATE_ATTEMPTS,
       UNKNOWN_HOST,
       TRIAL_REPORT_MS,
+      MAX_LICENSE_FILE_BYTES,
     },
     ...groups,
   }
@@ -156,13 +164,18 @@ export async function generate() {
  * exactly what the file will carry, or the generator stops: an answer is never
  * computed from anything JSON cannot say.
  */
-async function answered(group: GroupName, inputs: readonly object[], key: readonly VerifyingKey[]): Promise<unknown[]> {
+async function answered(
+  group: string,
+  spec: Group<Record<string, unknown>>,
+  inputs: readonly object[],
+  key: readonly VerifyingKey[],
+): Promise<unknown[]> {
   if (inputs.length === 0) throw new Error(`the group ${group} has no vectors`)
   const vectors: unknown[] = []
   for (const input of inputs) {
     const carried = JSON.parse(JSON.stringify(input)) as Record<string, unknown>
     deepStrictEqual(carried, input, `${group}: an input does not survive JSON`)
-    vectors.push({ ...carried, ...(await GROUPS[group].answer(carried, key)) })
+    vectors.push({ ...carried, ...(await spec.answer(carried, key)) })
   }
   return vectors
 }
@@ -170,7 +183,6 @@ async function answered(group: GroupName, inputs: readonly object[], key: readon
 export const VECTORS_PATH = fileURLToPath(new URL('../../conformance/vectors.json', import.meta.url))
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const vectors = await generate()
-  writeFileSync(VECTORS_PATH, `${JSON.stringify(vectors, null, 2)}\n`)
+  writeFileSync(VECTORS_PATH, `${JSON.stringify(await generate(), null, 2)}\n`)
   console.log(`wrote ${VECTORS_PATH}`)
 }

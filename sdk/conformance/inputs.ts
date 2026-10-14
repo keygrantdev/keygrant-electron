@@ -140,6 +140,17 @@ export interface GroupInputs {
   keySets: Named & { keys: JsonWebKey[]; token: string; now: number }
   /** Whether entitlements, read leniently (`entitlementsOf`), grant `code` (`grants`). */
   grants: Named & { ent: unknown; code: string }
+  /** A licence file's content (`bytes`: canonical base64url, no padding) and the token it holds, or null (`licenseFileToken`). */
+  licenseFileContainers: Named & { bytes: string }
+  /**
+   * A licence file's token verified against the key set `keys` (`verifyLicenseFile`
+   * of `importVerifyingKeys`), judged for `product`, the build's `major` and the
+   * denylist `revoked` (`checkLicenseFile`), and the status it gives stored
+   * (`licenseFileStatus`).
+   */
+  licenseFiles: Named & { token: string; keys: JsonWebKey[]; product: string; major: number; revoked: string[] }
+  /** A licence file given where a lease goes: verified and judged as `leases` does, and as a trial lease (`trialLeaseValid`). */
+  filesAsLeases: LeaseVector
 }
 
 /** A group's name. */
@@ -151,5 +162,8 @@ export type LaterGroup = 'majors' | 'referencedLinks' | 'trialReportDue'
 /** The key-set groups, which come after the purchase groups (`replay-keys.ts`). */
 export type KeyGroup = 'keyIds' | 'keySets' | 'grants'
 
+/** The licence-file groups, which come after the key-set groups (`replay-files.ts`). */
+export type FileGroup = 'licenseFileContainers' | 'licenseFiles' | 'filesAsLeases'
+
 /** The groups before them (`replay.ts`). */
-export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup>
+export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup>

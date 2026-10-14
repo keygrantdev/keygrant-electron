@@ -19,8 +19,11 @@ export type {
   DeviceIdentity,
   Fingerprinter,
   HttpAdapter,
+  ImportLicenseFileResult,
   LicenseConfig,
   LicenseError,
+  LicenseFileError,
+  LicensedTo,
   LicenseReason,
   LicenseState,
   LicenseStatus,
@@ -28,4 +31,5 @@ export type {
   StorageAdapter,
   StoredState,
 } from './types.js'
-export type { Entitlement, Entitlements } from '@keygrant/shared'
+export type { Entitlement, Entitlements, LicenseFileKind } from '@keygrant/shared'
+export { LICENSE_FILE_EXTENSION } from '@keygrant/shared'

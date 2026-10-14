@@ -1,8 +1,8 @@
-import type { Entitlements } from '@keygrant/shared'
+import type { Entitlements, LicenseFileKind } from '@keygrant/shared'
 
 /**
  * What `status()` says of the licence. `unknown` (reason `storage`): the
- * licence file could not be read just now (an antivirus scan holding it, say):
+ * state file could not be read just now (an antivirus scan holding it, say):
  * nothing is known either way, so keep running, and ask again shortly.
  */
 export type LicenseState = 'licensed' | 'trial' | 'expired' | 'invalid' | 'unlicensed' | 'unknown'
@@ -12,13 +12,14 @@ export type LicenseState = 'licensed' | 'trial' | 'expired' | 'invalid' | 'unlic
  * the key covers (buy an upgrade). `outdated`: the build is OLDER than the key's
  * lowest version (update the app; the key is for a later version). `device`:
  * the licence was activated on another device (this machine changed, or the
- * licence file was copied from another one); activate again on this one.
+ * state file was copied from another one); activate again on this one.
  * `tampered`: the lease is not for this licence at all (another key or
  * activation, another product, a bad signature). `unknown-key`: the lease is
  * signed by a key this build does not carry (`publicJwks`); asked online, the
  * server signs one with the key it uses now, which a build carrying that key
- * verifies. `storage`: the licence file could not be read just now (state
- * `unknown`).
+ * verifies. `storage`: the state file could not be read just now (state
+ * `unknown`). `revoked-file`: the stored offline licence file is one this
+ * build lists as revoked (`revokedLicenseFiles`).
  */
 export type LicenseReason =
   | 'revoked'
@@ -30,10 +31,22 @@ export type LicenseReason =
   | 'device'
   | 'trial'
   | 'storage'
+  | 'revoked-file'
+
+/** Who a licence file is licensed to: a name, an email address, or both. */
+export interface LicensedTo {
+  name?: string
+  email?: string
+}
 
 export interface LicenseStatus {
   state: LicenseState
   reason?: LicenseReason
+  /**
+   * The licence key this device holds, when it holds one. On a file status
+   * that is `licensed`, or `invalid` with `revoked-file`, `upgrade` or
+   * `outdated`, the key the file records; absent on any other file status.
+   */
   key?: string
   trialDaysLeft?: number
   trialEndsAt?: number
@@ -56,6 +69,19 @@ export interface LicenseStatus {
    */
   entitlements?: Entitlements
   /**
+   * `'file'` when the status rests on a stored offline licence file
+   * (`importLicenseFile`), licensed or not; absent for a key's lease, a trial
+   * and no licence. A file licence has no seat to deactivate: offer "Remove
+   * licence file" (`removeLicenseFile`) instead.
+   */
+  source?: 'file'
+  /**
+   * Who the stored offline licence file is licensed to, as it signs it: show
+   * it ("Licensed to Ada Lovelace"). On a file status that is `licensed`, or
+   * `invalid` with `revoked-file`, `upgrade` or `outdated`; absent otherwise.
+   */
+  licensedTo?: LicensedTo
+  /**
    * True when an earlier call on this `License` has not finished (an adapter
    * stuck on storage, say), so this answer comes from what is stored, with no
    * ask and no write (engine.ts `serial`). A restart clears it.
@@ -76,6 +102,34 @@ export type LicenseError =
   | 'invalid-lease'
 
 export type ActivateResult = { ok: true } | { ok: false; error: LicenseError }
+
+/**
+ * Why a licence file was not taken (`importLicenseFile`). `malformed`: not a
+ * licence file's text, or its token or claims are broken. `not-a-license-file`:
+ * a signed token, but not a licence file (a lease, say). `bad-signature`: not
+ * signed by the key it names. `unknown-key`: signed by a key this build does
+ * not carry (`publicJwks`). `wrong-product`: another product's file.
+ * `revoked-file`: listed in `revokedLicenseFiles`. `upgrade` / `outdated`: an
+ * offline file that does not cover this build (newer than it covers / older).
+ */
+export type LicenseFileError =
+  | 'malformed'
+  | 'not-a-license-file'
+  | 'bad-signature'
+  | 'unknown-key'
+  | 'wrong-product'
+  | 'revoked-file'
+  | 'upgrade'
+  | 'outdated'
+
+/**
+ * What `importLicenseFile` did. An offline file is stored, and licenses the app
+ * from then on; a key file's key is activated, as `activate(key)` would, and its
+ * errors are `activate()`'s.
+ */
+export type ImportLicenseFileResult =
+  | { ok: true; kind: LicenseFileKind; licensedTo: LicensedTo }
+  | { ok: false; error: LicenseFileError | LicenseError }
 
 /**
  * What `deactivate()` did about the seat. The local licence is dropped either
@@ -175,6 +229,12 @@ export interface StoredState {
    * (TRIAL_REPORT_MS), counting a trial answer (`trialAt`) as a report.
    */
   trialReportedAt?: number
+  /**
+   * The offline licence file this device holds (its token), as
+   * `importLicenseFile` stored it. Verified again on every status, so an edit
+   * to it licenses nothing. Never a key file: importing one activates its key.
+   */
+  licenseFile?: string
   /**
    * The default storage's revision of this state, one more on every save, so
    * a save can tell another process saved since it read (storage.ts `update`).
@@ -305,6 +365,13 @@ export interface LicenseConfig {
    * 15 s). Kept by the SDK whatever the HTTP adapter does with it.
    */
   httpTimeoutMs?: number
+  /**
+   * The ids of licence files this build refuses (a file's `fid`): how an app
+   * update stops an offline licence file that leaked, since nothing else can.
+   * Matched exactly. A stored file listed here reads as `invalid` /
+   * `revoked-file`; importing one is refused (`revoked-file`).
+   */
+  revokedLicenseFiles?: readonly string[]
   /** Adapter overrides. Any omitted adapter uses the Node default. */
   adapters?: Partial<Adapters>
 }

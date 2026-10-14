@@ -61,7 +61,9 @@ for (const file of walk(join(dist, 'types', 'sdk'))) {
 // The lease code is written against WebCrypto's global `JsonWebKey` and
 // `CryptoKey`, which an app's TypeScript has only with the DOM lib. Named from
 // Node's own WebCrypto types instead, so an Electron main process with
-// `types: ["node"]` alone type-checks against them.
+// `types: ["node"]` alone type-checks against them. Each alias is the file's
+// own: a declaration file without `export {}` exports every top-level type, so
+// two files of shared's index aliasing `CryptoKey` would clash there.
 const WEBCRYPTO_TYPES = ['JsonWebKey', 'CryptoKey']
 for (const file of walk(join(dist, 'types'))) {
   if (!file.endsWith('.d.ts')) continue
@@ -69,7 +71,8 @@ for (const file of walk(join(dist, 'types'))) {
   const used = WEBCRYPTO_TYPES.filter((name) => new RegExp(`\\b${name}\\b`).test(text))
   if (used.length === 0) continue
   const aliases = used.map((name) => `type ${name} = import('node:crypto').webcrypto.${name};`)
-  writeFileSync(file, `${aliases.join('\n')}\n${text}`)
+  const scoped = /^export \{\};?\s*$/m.test(text) ? '' : 'export {};\n'
+  writeFileSync(file, `${aliases.join('\n')}\n${text}${scoped}`)
 }
 
 const left = walk(join(dist, 'types')).filter((f) => readFileSync(f, 'utf8').includes('@keygrant/shared'))

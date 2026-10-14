@@ -43,6 +43,7 @@ import type { DeviceIdentity, DeviceKind, StoredState } from '../src/types.js'
 import type { FirstGroup, GroupInputs, GroupName, IdentityJson } from './inputs.js'
 import { LATER } from './replay-later.js'
 import { KEYS } from './replay-keys.js'
+import { FILES } from './replay-files.js'
 import { scripted } from './scripted.js'
 
 // --- JSON ---------------------------------------------------------------------
@@ -334,8 +335,12 @@ const FIRST: { [G in FirstGroup]: Group<GroupInputs[G]> } = {
   },
 }
 
-/** Every group: the first ones, then the later ones (`replay-later.ts`), then the key-set groups (`replay-keys.ts`), in the order of the file. */
-export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS }
+/**
+ * Every group: the first ones, then the later ones (`replay-later.ts`), then the
+ * key-set groups (`replay-keys.ts`), then the licence-file groups
+ * (`replay-files.ts`), in the order of the file.
+ */
+export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS, ...FILES }
 
 /**
  * The same groups as a harness reading the file sees them: a vector's inputs

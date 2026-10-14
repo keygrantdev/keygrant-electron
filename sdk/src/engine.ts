@@ -148,7 +148,8 @@ export abstract class Engine {
     return (await this.keySet()).map((k) => k.kid)
   }
 
-  private keySet(): Promise<VerifyingKey[]> {
+  /** The key set, imported once with each key's id: what every lease and licence file is verified against. */
+  protected keySet(): Promise<VerifyingKey[]> {
     this.verifyingKeys ??= importVerifyingKeys(this.publicJwks)
     return this.verifyingKeys
   }
@@ -347,7 +348,7 @@ export abstract class Engine {
 
   /**
    * A validate's body. With every fingerprint this device answers to, when it
-   * can tell, so the server refuses a licence file copied from another machine
+   * can tell, so the server refuses a state file copied from another machine
    * (`device`) before it touches the seat; with none when it cannot tell this
    * time, so a slow read never costs an honest device its renewal.
    */

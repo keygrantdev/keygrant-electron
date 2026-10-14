@@ -3,7 +3,7 @@
  * pieces of it that need no engine state: the server's error words, the
  * bounds the endpoints hold strings to, and the shapes of their answers.
  */
-import type { Entitlements } from '@keygrant/shared'
+import { MAX_LICENSE_KEY, type Entitlements } from '@keygrant/shared'
 import type { LicenseError, LicenseStatus, Refusal } from './types.js'
 
 /** Map a server error string to an SDK LicenseError. */
@@ -28,7 +28,7 @@ export function mapServerError(error: unknown): LicenseError {
 /** What `/v1/products/<slug>/activate` accepts for a device name. Longer is truncated, not refused. */
 export const MAX_DEVICE_NAME = 120
 /** What it accepts for a licence key. A longer one is not a key it could hold. */
-export const MAX_KEY = 120
+export const MAX_KEY = MAX_LICENSE_KEY
 
 /**
  * The key a person entered, NORMALISED, and the normalised key is the one that

@@ -22,6 +22,19 @@ export const ISSUER = 'keygrant' as const
 export const MAX_MAJOR = 99_999
 
 /**
+ * The longest licence key an SDK sends and a licence file may carry (UTF-16
+ * units). The worker's request schemas hold keys to the same 120 with literals
+ * of their own, which must stay equal to this.
+ */
+export const MAX_LICENSE_KEY = 120
+
+/**
+ * The longest product slug a licence file names. The worker's schemas hold
+ * slugs to the same 64 with literals of their own, which must stay equal to this.
+ */
+export const MAX_PRODUCT_SLUG = 64
+
+/**
  * The lease's `major` claim for a key with no upper bound ("version 2 and
  * later", or a subscription that covers whatever ships while it is paid). Above
  * every real major, so any SDK that compares its running major against the
@@ -156,7 +169,7 @@ export const LeaseClaims = z.object({
    * The device the activation belongs to: a hash of the fingerprint the SDK
    * sent when it activated (`fingerprintClaim`), never the fingerprint itself,
    * since the payload of a lease is readable by anyone holding it. The SDK
-   * refuses a lease whose `fp` is not its own device's, so a licence file
+   * refuses a lease whose `fp` is not its own device's, so a state file
    * copied to another machine does not license it. Absent on trial leases and
    * may be absent on a licence lease; an SDK accepts a licence lease without
    * it, which lasts only until its renewal brings one with it.

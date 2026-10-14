@@ -2583,7 +2583,7 @@ describe('a lease held to its key, its activation and its device', () => {
     ['another key', { sub: 'SLUICE-OTHR-OTHR-OTHR-OTHR' }, { state: 'invalid', reason: 'tampered' }],
     ['another activation', { aid: 'act_2' }, { state: 'invalid', reason: 'tampered' }],
     [
-      'another device (a machine that changed, or a licence file copied from it)',
+      'another device (a machine that changed, or a state file copied from it)',
       { device: 'fp-another-machine' },
       { state: 'invalid', reason: 'device', key: KEY },
     ],
@@ -2607,7 +2607,7 @@ describe('a lease held to its key, its activation and its device', () => {
   })
 
   it("says device, offline too, once a lease with no device claim is renewed with another device's", async () => {
-    // A licence file copied while it held a lease with no `fp`: taken until its renewal, which
+    // A state file copied while it held a lease with no `fp`: taken until its renewal, which
     // brings the other machine's claim.
     const h = await harness()
     const before = await leaseFor(h, { device: null })
@@ -2825,7 +2825,7 @@ describe('who this device is, when it cannot be told', () => {
     expect(stuck.count()).toBe(2)
   })
 
-  it("takes the server's device refusal: another machine holding this seat's licence file", async () => {
+  it("takes the server's device refusal: another machine holding this seat's state file", async () => {
     const h = await harness()
     h.setStored({ key: KEY, activationId: 'act_1', lease: await leaseFor(h, 'fp-test'), checkedMajor: 1, lastSeen: NOW })
     h.http.on('validate', () => ({ status: 403, json: { error: 'device' } }))

@@ -1,11 +1,12 @@
 import { LeaseClaims, ISSUER, SignableClaims, type LeaseInput } from './lease.js'
+import { ALG, KID, b64urlDecode, b64urlEncode, namedKeyId, signCompact } from './jws.js'
 
 /**
  * EdDSA (Ed25519) JWS signing/verification over WebCrypto. Deliberately no JWT
  * library: the whole point of a standard JWS is that ANY consumer can verify a
  * lease with off-the-shelf tooling. This file is the reference signer/verifier.
  *
- * It uses only `globalThis.crypto.subtle` and Ed25519, which Node 22 and any
+ * It uses only WebCrypto's `crypto.subtle` (the global `crypto`) and Ed25519, which Node 22 and any
  * other WebCrypto runtime provide, so this module is runtime-agnostic.
  */
 
@@ -13,47 +14,9 @@ const subtle = crypto.subtle
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 
-const ALG = { name: 'Ed25519' } as const
 const JOSE_HEADER = { alg: 'EdDSA', typ: 'JWT' } as const
 /** The header the server writes for a lease that names its key, up to the id (`signLease`, `keyIdOf`). */
 const NAMED_HEADER_START = '{"alg":"EdDSA","typ":"JWT","kid":"'
-const NAMED_HEADER_END = '"}'
-/** A key id a header may name: 1 to 64 characters of the base64url alphabet (a thumbprint is 43). */
-const KID = /^[A-Za-z0-9_-]{1,64}$/
-
-// ---- base64url ------------------------------------------------------------
-
-function b64urlEncode(bytes: Uint8Array): string {
-  let s = ''
-  for (const b of bytes) s += String.fromCharCode(b)
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-/**
- * Decode CANONICAL base64url: the URL-safe alphabet, no padding, and nothing
- * the encoder above would not have written (`b64urlEncode` of the result gives
- * the input back). Anything else throws.
- *
- * Strict on purpose. `atob` forgives padding, the standard alphabet and stray
- * bits in the last character, so one signature would have several spellings
- * that all verify, and an SDK in another language with a strict decoder would
- * refuse leases this one accepts. Every lease the server signs is canonical, so
- * only a token nobody issued is refused by this.
- */
-function b64urlDecode(input: string): Uint8Array<ArrayBuffer> {
-  if (!/^[A-Za-z0-9_-]*$/.test(input) || input.length % 4 === 1) throw new Error('not base64url')
-  const s = input.replace(/-/g, '+').replace(/_/g, '/')
-  const pad = s.length % 4 === 0 ? 0 : 4 - (s.length % 4)
-  const bin = atob(s + '='.repeat(pad))
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  if (b64urlEncode(out) !== input) throw new Error('not canonical base64url')
-  return out
-}
-
-function jsonToB64url(value: unknown): string {
-  return b64urlEncode(enc.encode(JSON.stringify(value)))
-}
 
 // ---- keys -----------------------------------------------------------------
 
@@ -191,9 +154,7 @@ export async function signLease(
   // Written as `keyIdOf` matches it: JSON.stringify keeps this member order.
   if (kid !== undefined && !KID.test(kid)) throw new Error('a key id is 1 to 64 characters of base64url')
   const header = kid === undefined ? JOSE_HEADER : { ...JOSE_HEADER, kid }
-  const signingInput = `${jsonToB64url(header)}.${jsonToB64url(claims)}`
-  const sig = new Uint8Array(await subtle.sign(ALG, signingKey, enc.encode(signingInput)))
-  return `${signingInput}.${b64urlEncode(sig)}`
+  return signCompact(JSON.stringify(header), JSON.stringify(claims), signingKey)
 }
 
 export type VerifyResult =
@@ -214,18 +175,7 @@ export type VerifyResult =
  * never parsed, so no two JSON readers can disagree about what it names.
  */
 function keyIdOf(header: string): string | undefined {
-  let bytes: Uint8Array
-  try {
-    bytes = b64urlDecode(header)
-  } catch {
-    return undefined
-  }
-  // Each byte as one character: a byte past ASCII matches nothing below.
-  let text = ''
-  for (const byte of bytes) text += String.fromCharCode(byte)
-  if (!text.startsWith(NAMED_HEADER_START) || !text.endsWith(NAMED_HEADER_END)) return undefined
-  const kid = text.slice(NAMED_HEADER_START.length, text.length - NAMED_HEADER_END.length)
-  return KID.test(kid) ? kid : undefined
+  return namedKeyId(header, NAMED_HEADER_START)
 }
 
 /**

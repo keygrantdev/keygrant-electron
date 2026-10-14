@@ -129,6 +129,98 @@ all, grants nothing; a running trial grants what its trial lease does.
 `has` would be false. `grants(status.entitlements, code)` answers the same of a
 status already in hand.
 
+## Licence files: drag and drop
+
+A licence can come as a file (`.kglicense`) the customer drops onto the app or
+opens from its licence screen. A **key file** carries their key: importing it
+activates the key online, exactly as typing it would. An **offline licence
+file** licenses the app with no network at all, for good, on machines that
+never connect; it has no seat limit and cannot be revoked, so the only way to
+stop one that leaked is an app update that lists its id:
+
+```ts
+// main process
+import { app, dialog, ipcMain } from 'electron'
+import { readFile } from 'node:fs/promises'
+import { License, LICENSE_FILE_EXTENSION } from '@keygrant/electron'
+
+const license = new License({
+  product: 'sluice',
+  apiBaseUrl: 'https://api.keygrant.dev',
+  publicJwks: KEYS.keys,
+  major: 3,
+  revokedLicenseFiles: [], // ids of files that leaked: an update adds them here
+})
+
+// The renderer hands over a dropped file's bytes.
+ipcMain.handle('license:import', (_event, bytes: Uint8Array) => license.importLicenseFile(bytes))
+
+// "Open licence file..." in a menu.
+async function openLicenseFile() {
+  const { filePaths } = await dialog.showOpenDialog({
+    filters: [{ name: 'License file', extensions: [LICENSE_FILE_EXTENSION.slice(1)] }],
+  })
+  if (filePaths[0]) return license.importLicenseFile(await readFile(filePaths[0]))
+}
+
+// macOS: a .kglicense the app is registered for, double-clicked in Finder.
+app.on('open-file', async (event, path) => {
+  event.preventDefault()
+  try {
+    const result = await license.importLicenseFile(await readFile(path))
+    if (!result.ok) showError(result.error)
+  } catch (error) {
+    showError(error) // unreadable, not saved, or a licence call still running: try again
+  }
+})
+```
+
+```ts
+// preload
+import { contextBridge, ipcRenderer } from 'electron'
+contextBridge.exposeInMainWorld('licensing', {
+  importFile: (bytes: Uint8Array) => ipcRenderer.invoke('license:import', bytes),
+})
+
+// renderer
+window.addEventListener('dragover', (event) => event.preventDefault())
+window.addEventListener('drop', async (event) => {
+  event.preventDefault()
+  const file = event.dataTransfer?.files[0]
+  if (!file) return
+  const result = await window.licensing.importFile(new Uint8Array(await file.arrayBuffer()))
+  if (result.ok) showThanks(result.licensedTo.name ?? result.licensedTo.email)
+  else showError(result.error)
+})
+```
+
+`importLicenseFile` takes the file's content (text, a byte array, a Node
+`Buffer` or an `ArrayBuffer`), never its path, and verifies it offline: signed
+by a key of `publicJwks`, for this product, and, for an offline file, covering
+this build's major. It resolves `{ ok: true, kind: 'key' | 'offline',
+licensedTo }`, or `{ ok: false, error }` with one of `malformed`,
+`not-a-license-file`, `bad-signature`, `unknown-key`, `wrong-product`,
+`revoked-file`, `upgrade`, `outdated`, or for a key file whatever `activate()`
+answers. It rejects when a licence call before it has not finished, when an
+offline file cannot be saved, and, for a key file, wherever `activate()`
+rejects. `unknown-key` means the file was signed by a key this build does not
+carry: a newer one, after the product rotated its key, which an update of the
+app carries. A key file's notes print its key, which can be typed meanwhile.
+
+An offline file is kept and checked again on every `status()`, which then
+answers `{ state: 'licensed', source: 'file', key, licensedTo, ... }` with the
+file's entitlements, never asking the server, `refresh()` included. Show
+"Licensed to Ada Lovelace" from `licensedTo`. A status with `source: 'file'`
+has no seat to deactivate: offer `removeLicenseFile()` instead. If the device
+also holds a key, a file that covers this build wins, and the key keeps working
+once the file is removed, revoked or outgrown. A file that does not cover this
+build answers only when no key and no running trial does.
+
+**Keep every key that signed a file in your builds.** A file names the key that
+signed it and never expires, so a key that has signed one stays in the
+product's key set, and in `publicJwks`, after it stops signing leases. A build
+without it reads such a file as `invalid` / `unknown-key`.
+
 ## Building the package
 
 The SDK is TypeScript source in a pnpm workspace. The installable package is

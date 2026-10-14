@@ -1,6 +1,14 @@
 import type { LeaseClaims } from '@keygrant/shared'
-import type { ActivateResult, DeactivateResult, LicenseConfig, LicenseStatus, Refusal, StoredState } from './types.js'
-import { TrialEngine } from './trials.js'
+import type {
+  ActivateResult,
+  DeactivateResult,
+  ImportLicenseFileResult,
+  LicenseConfig,
+  LicenseStatus,
+  Refusal,
+  StoredState,
+} from './types.js'
+import { FileEngine } from './files.js'
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
 import { activationIdentity } from './device.js'
 import { UNKEYED, activationPatch, sameKey, askDue, heldElsewhere, keptWith, leaseStatus, standingRefusal } from './offline.js'
@@ -29,8 +37,11 @@ import { MissingEntitlementError, grants } from './entitlements.js'
  *    trial is asked for again, bounded by STATUS_CHECK_TIMEOUT_MS (`healTrial`);
  *  - a running trial: its launch reported, at most once a day, in the
  *    background and never awaited (trials.ts `reportLaunch`).
+ *
+ * A stored offline licence file that licenses this build answers before all
+ * of that, and never goes online (files.ts).
  */
-export class License extends TrialEngine {
+export class License extends FileEngine {
   /** The device name an activation reports, cut to what the server takes. */
   private readonly deviceName?: string
 
@@ -87,6 +98,37 @@ export class License extends TrialEngine {
     return this.serial(async (readOnly) => {
       if (readOnly) throw new Error('a previous licence call has not finished; try again')
       return this.deactivateNow()
+    })
+  }
+
+  /**
+   * Take a licence file the customer was sent (`.kglicense`), as text or as
+   * bytes, as a drag-and-drop handler or an open dialog gets it: its content,
+   * never its path. Verified offline against the build's key set, for this
+   * product and, for an offline file, this build's major; refused when
+   * `revokedLicenseFiles` lists it. An OFFLINE file is then stored and licenses
+   * the app with no network, ever (`status()` gives `source: 'file'`). A KEY
+   * file's key is activated online exactly as `activate(key)` would, and its
+   * errors are `activate()`'s. Rejects when a call before it has not settled,
+   * when an offline file cannot be saved, and for a key file wherever
+   * `activate()` rejects; refuses, with a distinct error, anything else.
+   */
+  importLicenseFile(content: string | Uint8Array | ArrayBuffer): Promise<ImportLicenseFileResult> {
+    return this.serial(async (readOnly) => {
+      if (readOnly) throw new Error('a previous licence call has not finished; try again')
+      return this.importFile(content, (key) => this.activateNow(key))
+    })
+  }
+
+  /**
+   * Drop the stored offline licence file, if there is one; a key this device
+   * holds keeps working. Rejects when a call before it has not settled, or when
+   * that cannot be saved.
+   */
+  removeLicenseFile(): Promise<void> {
+    return this.serial(async (readOnly) => {
+      if (readOnly) throw new Error('a previous licence call has not finished; try again')
+      return this.removeFile()
     })
   }
 
@@ -237,6 +279,10 @@ export class License extends TrialEngine {
    * no ask and no write.
    */
   private async statusNow(state: StoredState, forceOnline: boolean, readOnly: boolean): Promise<LicenseStatus> {
+    // A stored offline licence file that licenses this build wins, offline, with no ask
+    // and no write; one that does not answers only when no key path and no running trial does.
+    const file = await this.fileStatus(state)
+    if (file?.state === 'licensed') return file
     const now = this.effectiveNow(state)
     // A device refusal stands only for the device it was given for: who this is.
     const device = state.refused === 'device' ? await this.device(MACHINE_ID_TIMEOUT_MS, state.deviceKind) : undefined
@@ -244,8 +290,23 @@ export class License extends TrialEngine {
     if (refused && readOnly) return { state: 'invalid', reason: refused, key: state.key }
     if (refused) return this.refusedStatus(state, refused, forceOnline)
     if (state.key && state.lease) return this.licenseStatus(state, state.lease, now, forceOnline, readOnly)
-    if (state.trialStart != null) return this.trialStatus(state, now, { forceOnline, readOnly })
-    return { state: 'unlicensed' }
+    return this.trialOrFile(state, now, file, { forceOnline, readOnly })
+  }
+
+  /**
+   * With no key to answer: a trial this device started while it runs, else a
+   * stored file that does not license this build (why is the news), else the
+   * trial that has ended, else `unlicensed`.
+   */
+  private async trialOrFile(
+    state: StoredState,
+    now: number,
+    file: LicenseStatus | null,
+    opts: { forceOnline: boolean; readOnly: boolean },
+  ): Promise<LicenseStatus> {
+    const trial = state.trialStart != null ? await this.trialStatus(state, now, opts) : null
+    if (trial?.state === 'trial') return trial
+    return file ?? trial ?? { state: 'unlicensed' }
   }
 
   /**
