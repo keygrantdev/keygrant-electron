@@ -167,3 +167,23 @@ export type FileGroup = 'licenseFileContainers' | 'licenseFiles' | 'filesAsLease
 
 /** The groups before them (`replay.ts`). */
 export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup>
+
+/**
+ * The user-lock groups (the SDK contract, section 11), STAGED in a file
+ * of their own (`sdk/conformance/user-lock.json`, `generate.ts`) until every
+ * SDK answers them, when they move, unchanged, to the end of
+ * `conformance/vectors.json`.
+ */
+export interface UserLockGroupInputs {
+  /**
+   * What `activate(key, options)` sends for what a person typed, or the error
+   * that refuses it before anything is sent (`typedFor`); an option that was not
+   * given is null.
+   */
+  typedFor: { email: string | null; code: string | null }
+  /** The word the server refused an activation with, and the error the SDK answers (`mapServerError`). */
+  userLockErrors: { error: unknown }
+}
+
+/** A user-lock group's name. */
+export type UserLockGroupName = keyof UserLockGroupInputs

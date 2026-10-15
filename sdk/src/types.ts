@@ -100,8 +100,29 @@ export type LicenseError =
   | 'not-configured'
   /** Server returned a lease that failed offline verification (integrity/config error). */
   | 'invalid-lease'
+  // A user-locked key asks a NEW device who it is (sdk-contract.md section 11):
+  /** Ask the person for the address the key was sold to and `activate(key, { email })` again. */
+  | 'user-email-required'
+  /** Not the key's address (or longer than any); nothing is said of the real one. */
+  | 'user-email-mismatch'
+  /** A code was just mailed to that address: ask for it and `activate(key, { email, code })`. */
+  | 'user-code-required'
+  /** The code is wrong, expired, used or not six digits: ask again, or `activate(key, { email })` for a new one. */
+  | 'user-code-invalid'
+  /** Three codes were sent for the key this hour. */
+  | 'too-many-codes'
+  /** Too many wrong addresses or codes for the key this hour: try again later. */
+  | 'too-many-attempts'
+  /** The code could not be sent just now and nothing was activated: try again. */
+  | 'try-again'
 
 export type ActivateResult = { ok: true } | { ok: false; error: LicenseError }
+
+/** What a person typed for a user-locked key (sdk-contract.md section 11): its address and, for a code key, the code. Never stored. */
+export interface ActivateOptions {
+  email?: string
+  code?: string
+}
 
 /**
  * Why a licence file was not taken (`importLicenseFile`). `malformed`: not a

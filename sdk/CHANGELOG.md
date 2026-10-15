@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0
+
+- User-locked keys: `activate(key, { email, code })` and `importLicenseFile(content, { email, code })`.
+  A licence model can let only the person a key was sold to activate a new device on it, known by the
+  address on the key (`email`), and, for a key that mails a code to that address, by the code too.
+  The new refusals come back as typed errors an app can act on: `user-email-required` (ask for the
+  address), `user-email-mismatch`, `user-code-required` (a code was just mailed: ask for it),
+  `user-code-invalid`, `too-many-codes`, `too-many-attempts`, and `try-again` (the code could not be sent:
+  nothing was activated, ask again). An app that switches over every `LicenseError` with an
+  exhaustiveness check has seven more cases to handle. Only a NEW device is ever asked: `validate`,
+  `status()`, renewals, a seat the key already holds and offline behaviour are unchanged, and a key that is
+  not locked ignores both options (an address over 254 characters, or a code that is not six digits, is
+  refused by the SDK itself for any key). Nothing about the address or the code is stored.
+- `ActivateOptions` is exported.
+
 ## 0.6.0
 
 - Licence files: `importLicenseFile(content)` takes a `.kglicense` file's content (text or bytes, never

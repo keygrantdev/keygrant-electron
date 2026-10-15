@@ -68,6 +68,35 @@ const result = await license.activate(enteredKey)
 For a customer who already holds a key, `upgradeUrl(link)` adds this install's
 activation to the link, so an upgrade sale finds the key it upgrades.
 
+## Keys only their buyer can activate
+
+A licence model can be **user-locked**: a NEW device activates on a key only when
+the person types the address the key was sold to, and, if the model says so,
+the code mailed to that address. Only a new device is asked: `status()`,
+renewals and a device that already holds a seat never are, and a key that is not
+locked ignores both fields (an address over 254 characters, or a code that is not
+six digits, is refused by the SDK itself for any key, without asking).
+
+```ts
+let result = await license.activate(key)
+if (!result.ok && result.error === 'user-email-required') {
+  // Ask the person for the email they bought with.
+  result = await license.activate(key, { email })
+}
+if (!result.ok && result.error === 'user-code-required') {
+  // A code was just mailed to that address: ask for it.
+  result = await license.activate(key, { email, code })
+}
+```
+
+The other answers an app should word: `user-email-mismatch` (not the key's
+address; nothing is said of the real one), `user-code-invalid` (wrong, expired or
+used: ask again, or `activate(key, { email })` for a new code), `too-many-codes`
+(three codes an hour), `too-many-attempts` (too many wrong tries; wait), and
+`try-again` (the code could not be sent just now: nothing was activated, ask
+again). Neither the address nor the code is stored by the SDK. A key file
+(`importLicenseFile`) of a locked key takes the same `{ email, code }`.
+
 ## Trials: what the app calls
 
 ```ts

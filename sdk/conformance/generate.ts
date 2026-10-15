@@ -29,8 +29,10 @@ import { DEFAULT_HTTP_TIMEOUT_MS, KEEP_CORRUPT, STALE_TEMP_MS, UNKNOWN_HOST } fr
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, BOOT_SLACK_MS, MACHINE_ID_TIMEOUT_MS } from '../src/machine-id.js'
 import { LOCK_GRACE_MS } from '../src/engine.js'
 import { UPDATE_ATTEMPTS } from '../src/storage.js'
-import type { GroupInputs, GroupName } from './inputs.js'
+import type { GroupInputs, GroupName, UserLockGroupInputs, UserLockGroupName } from './inputs.js'
 import { GROUPS, type Group } from './replay.js'
+import { USER_LOCK_GROUPS } from './replay-user-lock.js'
+import { typedFor, userLockErrors } from './vectors/user-lock.js'
 import { TEST_PUBLIC_JWK, context, type Context } from './vectors/common.js'
 import { leases } from './vectors/leases.js'
 import { trials } from './vectors/trials.js'
@@ -94,6 +96,12 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   licenseFileContainers,
   licenseFiles,
   filesAsLeases,
+}
+
+/** Every user-lock group's inputs, built: the staged file (`generateUserLock`). */
+const USER_LOCK_BUILDERS: { [G in UserLockGroupName]: () => UserLockGroupInputs[G][] } = {
+  typedFor,
+  userLockErrors,
 }
 
 const COMMENT =
@@ -180,9 +188,37 @@ async function answered(
   return vectors
 }
 
+const USER_LOCK_COMMENT =
+  'User-lock vectors, generated from the KeyGrant Electron SDK (the reference), STAGED here until every port answers them (U2): then their groups move, unchanged, to the end of conformance/vectors.json. Every KeyGrant SDK that takes an email and a code at activation must reproduce every answer: "expect".'
+
+const USER_LOCK_CONVENTIONS = [
+  'The conventions of conformance/vectors.json hold here.',
+  'typedFor: email and code are what a person typed for a user-locked key, null when they gave none. expect is {send: {email?, code?}}, each member only when there was one to send, or {refused: error}, the error activate answers at once, before anything is asked of the server.',
+  'The address is trimmed (as a key is: the whitespace a paste carries, a byte-order mark included) and sent as typed otherwise; a blank is none. One longer than 254 characters after the trim is refused user-email-mismatch. The code has its ends trimmed and then its spaces (U+0020) dropped, and a blank is none; what remains must be exactly six ASCII digits (0 to 9), else it is refused user-code-invalid. The address is judged before the code.',
+  'userLockErrors: error is the error word of a refused activation, as the server writes it (null or a number for a body that has none); expect is the error activate answers, every word of a user lock as itself and any other word as network.',
+]
+
+/** The staged user-lock vectors, each answered from its JSON as `generate` answers the others. */
+export async function generateUserLock() {
+  const verifying = await importVerifyingKeys([TEST_PUBLIC_JWK as JsonWebKey])
+  const groups: Record<string, unknown[]> = {}
+  for (const group of Object.keys(USER_LOCK_GROUPS) as UserLockGroupName[]) {
+    groups[group] = await answered(group, USER_LOCK_GROUPS[group], USER_LOCK_BUILDERS[group](), verifying)
+  }
+  return { $comment: USER_LOCK_COMMENT, conventions: USER_LOCK_CONVENTIONS, ...groups }
+}
+
 export const VECTORS_PATH = fileURLToPath(new URL('../../conformance/vectors.json', import.meta.url))
+/** The staged user-lock vectors: beside the generator, in sdk/, so the Electron SDK's own repository carries them. */
+export const USER_LOCK_VECTORS_PATH = fileURLToPath(new URL('./user-lock.json', import.meta.url))
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  writeFileSync(VECTORS_PATH, `${JSON.stringify(await generate(), null, 2)}\n`)
-  console.log(`wrote ${VECTORS_PATH}`)
+  const files: [string, unknown][] = [
+    [VECTORS_PATH, await generate()],
+    [USER_LOCK_VECTORS_PATH, await generateUserLock()],
+  ]
+  for (const [path, vectors] of files) {
+    writeFileSync(path, `${JSON.stringify(vectors, null, 2)}\n`)
+    console.log(`wrote ${path}`)
+  }
 }

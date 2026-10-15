@@ -4,7 +4,7 @@
  * bounds the endpoints hold strings to, and the shapes of their answers.
  */
 import { MAX_LICENSE_KEY, type Entitlements } from '@keygrant/shared'
-import type { LicenseError, LicenseStatus, Refusal } from './types.js'
+import type { ActivateOptions, LicenseError, LicenseStatus, Refusal } from './types.js'
 
 /** Map a server error string to an SDK LicenseError. */
 export function mapServerError(error: unknown): LicenseError {
@@ -20,6 +20,15 @@ export function mapServerError(error: unknown): LicenseError {
       return 'upgrade'
     case 'update-required':
       return 'outdated'
+    // A user-locked key's new device (the SDK contract, section 11): each word is its own error.
+    case 'user-email-required':
+    case 'user-email-mismatch':
+    case 'user-code-required':
+    case 'user-code-invalid':
+    case 'too-many-codes':
+    case 'too-many-attempts':
+    case 'try-again':
+      return error
     default:
       return 'network'
   }
@@ -51,6 +60,62 @@ export const MAX_KEY = MAX_LICENSE_KEY
 export function enteredKey(key: string): string | null {
   const entered = key.trim().toUpperCase()
   return entered && entered.length <= MAX_KEY ? entered : null
+}
+
+/** The longest address the endpoint takes; a longer one is no key's address. */
+export const MAX_EMAIL = 254
+/** How many digits a code has. */
+const CODE_DIGITS = 6
+
+/** A code a JavaScript caller kept as a number, as its six digits: a leading zero is not lost (12345 was 012345). */
+function digitsOf(value: unknown): string | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value < 10 ** CODE_DIGITS ? String(value).padStart(CODE_DIGITS, '0') : null
+}
+
+/**
+ * What a JavaScript caller handed for an address or a code, as text, trimmed: a string as it is,
+ * and anything else none (but a code kept as a number, `digitsOf`). Typed ports take text.
+ */
+function typed(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * The address a person entered, trimmed, for a user-locked key: null when there is none (a blank
+ * is none, and is not sent). The server compares it without regard to case, so it is sent as
+ * typed. `tooLong` (longer than `MAX_EMAIL`) can match no key's address, and is refused locally
+ * as a mismatch.
+ */
+export function enteredEmail(email: unknown): { send: string | null } | { tooLong: true } {
+  const entered = typed(email)
+  if (entered === '') return { send: null }
+  return entered.length <= MAX_EMAIL ? { send: entered } : { tooLong: true }
+}
+
+/**
+ * The code a person entered: its spaces (U+0020) dropped after the ends are trimmed, since a code
+ * read off an email is typed as 123 456 as often as 123456. Null when there is none (a blank is
+ * none, and is not sent); `malformed` when it is not exactly six ASCII digits, which no code is,
+ * refused locally as an invalid code without costing the key one of its wrong tries.
+ */
+export function enteredCode(code: unknown): { send: string | null } | { malformed: true } {
+  const entered = (digitsOf(code) ?? typed(code)).split(' ').join('')
+  if (entered === '') return { send: null }
+  return /^[0-9]+$/.test(entered) && entered.length === CODE_DIGITS ? { send: entered } : { malformed: true }
+}
+
+/**
+ * What an activation sends for what a person typed for a user-locked key: the entered address and
+ * code, each only when there is one, or the error that refuses it before anything is sent (an
+ * address longer than any is `user-email-mismatch`, a code that is not six digits
+ * `user-code-invalid`; the address is judged first).
+ */
+export function typedFor(options: ActivateOptions): { send: { email?: string; code?: string } } | { refused: LicenseError } {
+  const email = enteredEmail(options.email)
+  if ('tooLong' in email) return { refused: 'user-email-mismatch' }
+  const code = enteredCode(options.code)
+  if ('malformed' in code) return { refused: 'user-code-invalid' }
+  return { send: { ...(email.send !== null ? { email: email.send } : {}), ...(code.send !== null ? { code: code.send } : {}) } }
 }
 
 /** Whether two licence keys are the same key: the server matches them without regard to case. */

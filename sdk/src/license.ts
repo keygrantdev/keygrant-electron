@@ -1,5 +1,6 @@
 import type { LeaseClaims } from '@keygrant/shared'
 import type {
+  ActivateOptions,
   ActivateResult,
   DeactivateResult,
   ImportLicenseFileResult,
@@ -14,7 +15,7 @@ import { activationIdentity } from './device.js'
 import { UNKEYED, activationPatch, sameKey, askDue, heldElsewhere, keptWith, leaseStatus, standingRefusal } from './offline.js'
 import { referencedLink } from './link.js'
 import { asksOnValidLease } from './renewal.js'
-import { MAX_DEVICE_NAME, STATUS_CHECK_TIMEOUT_MS, enteredKey, errorOf, mapServerError, parseLeaseBody, trimToLength } from './wire.js'
+import { MAX_DEVICE_NAME, STATUS_CHECK_TIMEOUT_MS, enteredKey, errorOf, mapServerError, parseLeaseBody, trimToLength, typedFor } from './wire.js'
 import { MissingEntitlementError, grants } from './entitlements.js'
 
 /**
@@ -60,11 +61,21 @@ export class License extends FileEngine {
 
   // --- public API ------------------------------------------------------------
 
-  /** Activate a license key on this device. */
-  activate(key: string): Promise<ActivateResult> {
+  /**
+   * Activate a license key on this device.
+   *
+   * A key whose licence model is user-locked asks a NEW device who it is, and only a new
+   * device: `options.email` is the address the key was sold to, and, for a key that mails a
+   * code, `options.code` is the code that came to it. The first activation of such a key is
+   * answered `user-email-required`; with the address, `user-code-required` (a code was sent) or
+   * a lease; with the code, a lease. Neither is stored. A key that is not locked ignores both once they reach
+   * the server, but an address longer than any email, or a code that is not six digits, is refused here
+   * for any key (`user-email-mismatch`, `user-code-invalid`), and a value that is neither text nor a number is ignored.
+   */
+  activate(key: string, options?: ActivateOptions | null): Promise<ActivateResult> {
     // Behind a call that has not settled (engine.ts `serial`), nothing may be
     // written: the activation is answered as not reaching the server, to retry.
-    return this.serial(async (readOnly) => (readOnly ? { ok: false, error: 'network' } : this.activateNow(key)))
+    return this.serial(async (readOnly) => (readOnly ? { ok: false, error: 'network' } : this.activateNow(key, options ?? {})))
   }
 
   /**
@@ -111,12 +122,13 @@ export class License extends FileEngine {
    * file's key is activated online exactly as `activate(key)` would, and its
    * errors are `activate()`'s. Rejects when a call before it has not settled,
    * when an offline file cannot be saved, and for a key file wherever
-   * `activate()` rejects; refuses, with a distinct error, anything else.
+   * `activate()` rejects; refuses, with a distinct error, anything else. A key file of a
+   * user-locked key takes `options` as `activate(key, options)` does.
    */
-  importLicenseFile(content: string | Uint8Array | ArrayBuffer): Promise<ImportLicenseFileResult> {
+  importLicenseFile(content: string | Uint8Array | ArrayBuffer, options?: ActivateOptions | null): Promise<ImportLicenseFileResult> {
     return this.serial(async (readOnly) => {
       if (readOnly) throw new Error('a previous licence call has not finished; try again')
-      return this.importFile(content, (key) => this.activateNow(key))
+      return this.importFile(content, (key) => this.activateNow(key, options ?? {}))
     })
   }
 
@@ -200,10 +212,14 @@ export class License extends FileEngine {
 
   // --- internals -------------------------------------------------------------
 
-  private async activateNow(key: string): Promise<ActivateResult> {
+  private async activateNow(key: string, options: ActivateOptions): Promise<ActivateResult> {
     // Normalised, and refused here when it cannot be a key (wire.ts `enteredKey`).
     const entered = enteredKey(key)
     if (entered === null) return { ok: false, error: 'invalid-key' }
+    // What a person typed for a user-locked key: one that can be no address, or no code, is
+    // refused here, before anything is asked of the server or its wrong tries are spent.
+    const typed = typedFor(options)
+    if ('refused' in typed) return { ok: false, error: typed.refused }
     // Install memory protects the seat this install holds: re-activating that
     // key keeps to it; a first activation, or another key's, starts afresh.
     const stored = await this.load()
@@ -220,7 +236,7 @@ export class License extends FileEngine {
     // configuration, never a network failure.
     const kids = await this.keyIds()
     try {
-      const body = { key: entered, fingerprint, ...(kind ? { fingerprintKind: kind } : {}), name: this.deviceName, major: this.major, kids }
+      const body = { key: entered, fingerprint, ...(kind ? { fingerprintKind: kind } : {}), name: this.deviceName, major: this.major, kids, ...typed.send }
       res = await this.post('activate', body)
     } catch {
       return { ok: false, error: 'network' }

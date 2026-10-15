@@ -12,6 +12,7 @@ export {
   systemClock,
 } from './adapters.js'
 export type {
+  ActivateOptions,
   ActivateResult,
   DeactivateResult,
   Adapters,
