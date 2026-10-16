@@ -28,9 +28,14 @@ export type {
   LicenseReason,
   LicenseState,
   LicenseStatus,
+  MeterFigure,
+  MeterStatus,
   RegistryStash,
+  SpendEntry,
   StorageAdapter,
   StoredState,
+  UseError,
+  UseResult,
 } from './types.js'
 export type { Entitlement, Entitlements, LicenseFileKind } from '@keygrant/shared'
 export { LICENSE_FILE_EXTENSION } from '@keygrant/shared'

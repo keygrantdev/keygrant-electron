@@ -52,6 +52,9 @@ const APP = `import {
   type LicenseFileError,
   type LicenseFileKind,
   type LicenseStatus,
+  type MeterStatus,
+  type UseError,
+  type UseResult,
 } from '@keygrant/electron'
 
 const license = new License({
@@ -77,6 +80,17 @@ export const refused: LicenseFileError = 'revoked-file'
 
 export async function state(): Promise<LicenseStatus['state']> {
   return (await license.status()).state
+}
+
+// Metered uses: the call, its answer, its errors and the meters a status shows.
+export async function spend(): Promise<number | UseError> {
+  const result: UseResult = await license.use('exports', 2)
+  return result.ok ? result.left : result.error
+}
+
+export async function exportsLeft(): Promise<number | undefined> {
+  const meter: MeterStatus | undefined = (await license.status()).meters?.exports
+  return meter?.left
 }
 
 export async function edition(): Promise<string | undefined> {

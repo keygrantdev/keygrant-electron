@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0
+
+- Metered uses: `use(meter, n = 1)` spends `n` uses of a meter the key's licence model counts (1,000
+  exports for good, 50 renders each billing period) and answers `{ ok: true, left }`, or `{ ok: false,
+  error }` with `invalid-amount`, `no-meter`, `used-up` (with `left`), `offline-limit` (with `left`),
+  `not-licensed`, `storage`, or the server's verdict on the key, the build or the device (`revoked`,
+  `upgrade`, `outdated`, `device`). Online it is exact and atomic. When KeyGrant gives no answer (no
+  network, a timeout, a 5xx, a 429) the device spends from its offline allowance for the meter, never past
+  what it last heard is left, and answers `{ ok: true, left, offline: true }`; past the allowance it is
+  `offline-limit`. A spend the allowance would refuse asks the server, whatever the last outage left
+  behind, once a minute while it stays out of reach; one it covers waits a minute after an outage, doubling to an
+  hour. It never rejects, and its request waits at most 5 seconds (less when `httpTimeoutMs` is
+  shorter). A meter never takes a licence away: nothing in `status()` reads one to decide whether the app is
+  licensed.
+- `status().meters`, by meter code: `left` (the lease's figure net of this device's unsynced spends), `total`,
+  `offline` (this device's allowance), `unsynced` and `resets`. Offline, from the lease; on a `licensed`
+  status from a key's lease that names meters only. The new types `MeterStatus`, `UseResult` and `UseError`
+  are exported.
+- The spends a device made with no answer are kept in the stored state (`spends`, with the newest figures a
+  `use` answer gave in `meterFigures`), merged across processes as the rest of the state is, and reported
+  with the next `validate` (a check-in or renewal), `use` or `deactivate`, which now also names the device's
+  fingerprints when it carries a report. They are dropped only when the server says it recorded them; a
+  device back online reports at its next `status()`. A journal never fails a renewal or a deactivation. Entries
+  not reported within 180 days are dropped, and at most 64 are kept. A spend the SDK could not save (a disk
+  that refuses its writes) is kept in memory, counted in `left` and `unsynced`, and reported once it has
+  been saved (a spend whose request got no answer, and the take-back of one that was refused, are reported
+  with the next request). `deactivate()` clears them with the licence even when KeyGrant could not be
+  reached, so what the server did not hear is lost: at most the offline allowance of each meter.
+- `StoredState` has `spends` and `meterFigures`, and `SpendEntry` and `MeterFigure` are exported. An app that
+  switches over every `LicenseError` is unaffected: `use` has its own errors.
+
 ## 0.7.0
 
 - User-locked keys: `activate(key, { email, code })` and `importLicenseFile(content, { email, code })`.
@@ -11,7 +42,7 @@
   nothing was activated, ask again). An app that switches over every `LicenseError` with an
   exhaustiveness check has seven more cases to handle. Only a NEW device is ever asked: `validate`,
   `status()`, renewals, a seat the key already holds and offline behaviour are unchanged, and a key that is
-  not locked ignores both options (an address over 254 characters, or a code that is not six digits, is
+  not locked ignores both options (an address over 254 UTF-16 units, or a code that is not six digits, is
   refused by the SDK itself for any key). Nothing about the address or the code is stored.
 - `ActivateOptions` is exported.
 

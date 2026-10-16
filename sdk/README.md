@@ -97,6 +97,64 @@ used: ask again, or `activate(key, { email })` for a new code), `too-many-codes`
 again). Neither the address nor the code is stored by the SDK. A key file
 (`importLicenseFile`) of a locked key takes the same `{ email, code }`.
 
+## Metered uses: counting what a key may do
+
+A licence model can count uses of what it sells: 1,000 exports for good, or 50
+renders each billing period. The app spends them with `use(meter, n)`, before
+the work they count, and does the work only when the spend is `ok`:
+
+```ts
+const spent = await license.use('exports') // use('exports', 40) spends forty at once, whole or none
+if (spent.ok) {
+  runExport() // spent.left: what is left now, net of this device's unsynced spends
+} else if (spent.error === 'used-up') {
+  offerMoreExports(spent.left) // the server's word: fewer left than asked (0 when none)
+} else if (spent.error === 'offline-limit') {
+  askToConnect() // KeyGrant could not be reached, and this is past what this device may spend without it
+} else {
+  showMeterProblem(spent.error) // 'no-meter', 'not-licensed', 'revoked', 'device', 'upgrade', 'outdated', 'storage', 'invalid-amount'
+}
+
+const { meters } = await license.status() // offline, from the lease
+meters?.exports // { left: 950, total: 1000, offline: 100, unsynced: 0, resets: false }
+```
+
+- **Online it is exact.** The server takes `n` only while the meter has room for
+  all of it. Two calls are two spends; the SDK's own retries and reports never
+  count one twice.
+- **With no answer it spends from an allowance.** No network, a timeout, a 5xx,
+  a 429 or an answer the SDK cannot use: the device spends from its offline
+  allowance for that meter (set on the licence model; a tenth of the meter by
+  default, 0 for online only), never past what it last heard is left, and
+  reports the spend with its next check-in. Past either, `offline-limit`. A
+  spend the allowance would refuse asks the server first, whatever the last
+  outage left behind, so a customer who is back online is not refused for it
+  (once a minute while KeyGrant stays out of reach); one the allowance covers is
+  not asked again for a minute after an outage, growing to an hour. The unsynced spends are kept with the licence, so they
+  survive a restart and a second instance of the app, and a spend the SDK
+  cannot save yet is kept in memory: the customer always gets the use they were
+  told they had, and it is reported once it has been saved (a spend in doubt, and the take-back of one refused, are reported with the next request).
+- **It needs a key's lease** that licenses this build on this device
+  (`not-licensed` otherwise, without asking). A device trial and an offline
+  licence file have no meters.
+- **`deactivate()` clears the unsynced spends with the licence.** It sends them
+  with the release, but clears them locally even when KeyGrant could not be
+  reached (`released` is then false), so what the server did not hear is lost: at
+  most the offline allowance of each meter.
+- **It never rejects**: every outcome is in its answer. A `use` request waits at
+  most 5 seconds for the server (less when `httpTimeoutMs` is shorter).
+- **`status().meters`** is there on a `licensed` status from a key's lease that
+  names meters, and absent on every other status: `left` is net of this
+  device's unsynced spends, `total` is what the key holds (for good, or this
+  period), `offline` is this device's allowance, `unsynced` what it has spent
+  and not reported, and `resets` is true for a meter that comes back each
+  billing period. A plain object: test a code that is also an
+  `Object.prototype` member with `Object.hasOwn(status.meters ?? {}, code)`.
+- **A meter never takes the licence away.** Nothing reads one to decide whether
+  the app is licensed: a meter that is used up refuses spends, never the app.
+- An app built with an SDK from before meters licenses a metered key as any
+  other and cannot spend.
+
 ## Trials: what the app calls
 
 ```ts

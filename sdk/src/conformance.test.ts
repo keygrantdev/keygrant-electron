@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { importVerifyingKeys } from '@keygrant/shared'
-import { USER_LOCK_VECTORS_PATH, VECTORS_PATH, generate, generateUserLock } from '../conformance/generate.js'
-import { GROUPS, type Group } from '../conformance/replay.js'
+import { VECTORS_PATH, WIRE_BODIES_PATH, generate } from '../conformance/generate.js'
+import { wireBodies } from '../conformance/bodies.js'
+import { GROUPS } from '../conformance/replay.js'
 import { FILES } from '../conformance/replay-files.js'
-import { USER_LOCK_GROUPS } from '../conformance/replay-user-lock.js'
-import { COVERAGE, type Facet } from '../conformance/coverage.js'
+import { METERS } from '../conformance/replay-meters.js'
+import { USER_LOCK } from '../conformance/replay-user-lock.js'
+import { COVERAGE } from '../conformance/coverage.js'
 import { FILE_COVERAGE } from '../conformance/coverage-files.js'
-import { USER_LOCK_COVERAGE } from '../conformance/coverage-user-lock.js'
+import { METER_COVERAGE } from '../conformance/coverage-meters.js'
 
 /**
  * `conformance/vectors.json` is what every KeyGrant SDK must answer, taken from
@@ -16,39 +18,23 @@ import { USER_LOCK_COVERAGE } from '../conformance/coverage-user-lock.js'
  * behaviour that is not carried into the vectors fails, so the other SDKs are
  * never held to answers the reference no longer gives.
  *
- * The user-lock vectors are staged in `sdk/conformance/user-lock.json` until
- * every port answers them (U2), and held to the same checks here.
- *
  * To accept a deliberate change: `pnpm --filter @keygrant/electron run conformance`,
  * then make every other SDK pass the new vectors.
  */
 
 type Vector = Record<string, unknown> & { name?: string }
-
-/** A vector file: where it is, how it is built, how its groups are answered and what they must cover. */
-interface VectorFile {
-  path: string
-  build: () => Promise<unknown>
-  groups: Readonly<Record<string, Group<Record<string, unknown>>>>
-  coverage: Record<string, Record<string, Facet>>
-}
-
 const committed = (): Record<string, unknown> => JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as Record<string, unknown>
 
-const VECTOR_FILES: [string, VectorFile][] = [
-  ['conformance/vectors.json', { path: VECTORS_PATH, build: generate, groups: GROUPS, coverage: COVERAGE }],
-  ['the staged user-lock vectors', { path: USER_LOCK_VECTORS_PATH, build: generateUserLock, groups: USER_LOCK_GROUPS as VectorFile['groups'], coverage: USER_LOCK_COVERAGE }],
-]
+/** How many groups the metered-uses vectors are, which close the file. */
+const METER_GROUP_COUNT = Object.keys(METERS).length
 
 // Generating every vector signs and verifies hundreds of leases: well inside a second
 // alone, but past vitest's five on a machine busy with other builds.
 const HEAVY = { timeout: 60_000 }
 
-describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
-  const file = (): Record<string, unknown> => JSON.parse(readFileSync(spec.path, 'utf8')) as Record<string, unknown>
-
+describe('the SDK conformance vectors', () => {
   it('are what the reference SDK answers today', HEAVY, async () => {
-    expect(JSON.parse(JSON.stringify(await spec.build()))).toEqual(file())
+    expect(JSON.parse(JSON.stringify(await generate()))).toEqual(committed())
   })
 
   it('are answered by the reference from nothing but their own JSON', HEAVY, async () => {
@@ -58,10 +44,10 @@ describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
      * carry (an `undefined` that JSON drops) fails here, in the reference,
      * rather than in every port that tries to reproduce it.
      */
-    const vectors = file()
-    const key = await importVerifyingKeys([(vectors.publicJwk ?? committed().publicJwk) as JsonWebKey])
+    const vectors = committed()
+    const key = await importVerifyingKeys([vectors.publicJwk as JsonWebKey])
     const mismatches: string[] = []
-    for (const [name, group] of Object.entries(spec.groups)) {
+    for (const [name, group] of Object.entries(GROUPS)) {
       for (const vector of vectors[name] as Vector[]) {
         const inputs = Object.fromEntries(Object.entries(vector).filter(([field]) => !group.outputs.includes(field)))
         const answered = JSON.parse(JSON.stringify(await group.answer(inputs, key))) as Record<string, unknown>
@@ -74,9 +60,9 @@ describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
   })
 
   it('hold every group with at least one vector, and nothing the replay does not know', () => {
-    const vectors = file()
+    const vectors = committed()
     const groups = Object.keys(vectors).filter((k) => Array.isArray(vectors[k]) && k !== 'conventions')
-    expect(groups.sort()).toEqual(Object.keys(spec.groups).sort())
+    expect(groups.sort()).toEqual(Object.keys(GROUPS).sort())
     for (const name of groups) expect((vectors[name] as unknown[]).length, name).toBeGreaterThan(0)
   })
 
@@ -88,10 +74,10 @@ describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
      * that keeps its claims, an error word, or one platform's machine ids
      * regenerates a file the first test accepts, and fails here.
      */
-    const vectors = file()
-    expect(Object.keys(spec.coverage).sort()).toEqual(Object.keys(spec.groups).sort())
+    const vectors = committed()
+    expect(Object.keys(COVERAGE).sort()).toEqual(Object.keys(GROUPS).sort())
     const differences: string[] = []
-    for (const [name, facets] of Object.entries(spec.coverage)) {
+    for (const [name, facets] of Object.entries(COVERAGE)) {
       for (const [facet, { of, expect: wanted }] of Object.entries(facets)) {
         const seen = [...new Set((vectors[name] as Vector[]).map(of))].sort()
         if (JSON.stringify(seen) !== JSON.stringify([...wanted].sort())) {
@@ -105,9 +91,9 @@ describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
   it('give every vector every answer its group has', () => {
     // An answer left out would be compared as `undefined` by a harness that
     // reads it as a field, and pass for a port that answers nothing.
-    const vectors = file()
+    const vectors = committed()
     const missing: string[] = []
-    for (const [name, group] of Object.entries(spec.groups)) {
+    for (const [name, group] of Object.entries(GROUPS)) {
       for (const vector of vectors[name] as Vector[]) {
         for (const field of group.outputs) if (!(field in vector)) missing.push(`${name}: ${vector.name ?? JSON.stringify(vector)} has no ${field}`)
       }
@@ -117,10 +103,10 @@ describe.each(VECTOR_FILES)('the SDK conformance vectors: %s', (_, spec) => {
 })
 
 describe('the licence-file vectors', () => {
-  it('are the last groups of the file, in their order, so every group before them is as it was', () => {
+  it('are the groups just before the user-lock groups, in their order, so every group before them is as it was', () => {
     const file = committed()
     const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
-    expect(groups.slice(-3)).toEqual(Object.keys(FILES))
+    expect(groups.slice(-5 - METER_GROUP_COUNT, -2 - METER_GROUP_COUNT)).toEqual(Object.keys(FILES))
   })
 
   it('tell every vector apart by its rule, so deleting any one of them fails the coverage', () => {
@@ -135,8 +121,40 @@ describe('the licence-file vectors', () => {
   })
 })
 
-describe('the staged user-lock vectors', () => {
-  it('share no group with conformance/vectors.json, so moving them there adds them and changes nothing else', () => {
-    expect(Object.keys(USER_LOCK_GROUPS).filter((name) => name in GROUPS || name in FILES)).toEqual([])
+describe('the user-lock vectors', () => {
+  it('are the groups just before the metered-uses groups, in their order, so every group before them is as it was', () => {
+    const file = committed()
+    const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
+    expect(groups.slice(-2 - METER_GROUP_COUNT, -METER_GROUP_COUNT)).toEqual(Object.keys(USER_LOCK))
+  })
+})
+
+describe('the metered-uses vectors', () => {
+  it('are the last groups of the file, in their order, so every group before them is as it was', () => {
+    const file = committed()
+    const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
+    expect(groups.slice(-METER_GROUP_COUNT)).toEqual(Object.keys(METERS))
+  })
+
+  it('keep the constants the ports need, beside the file’s own', () => {
+    const constants = committed().constants as Record<string, unknown>
+    expect(constants).toMatchObject({ MAX_METER_USES: 1_000_000_000, MAX_PENDING_SPENDS: 64, MAX_PENDING_VOIDS: 16, PENDING_MAX_MS: 15_552_000_000, USE_TIMEOUT_MS: 5_000 })
+  })
+
+  it('tell every vector apart by its rule, so deleting any one of them fails the coverage', () => {
+    const file = committed() as Record<string, Vector[] | undefined>
+    for (const [name, facets] of Object.entries(METER_COVERAGE)) {
+      const rule = facets.rule
+      const vectors = file[name]
+      if (rule === undefined || vectors === undefined) throw new Error(`${name}: no rule facet, or no vectors in the file`)
+      expect(vectors.length, name).toBeGreaterThan(0)
+      expect(new Set(vectors.map((v) => rule.of(v))).size, name).toBe(vectors.length)
+    }
+  })
+})
+
+describe('the request bodies a License sends with a report', () => {
+  it('are the committed file’s: regenerating them from a License over a fake adapter gives the file the worker’s test parses', HEAVY, async () => {
+    expect(JSON.parse(JSON.stringify(await wireBodies()))).toEqual(JSON.parse(readFileSync(WIRE_BODIES_PATH, 'utf8')))
   })
 })

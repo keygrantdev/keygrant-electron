@@ -190,7 +190,10 @@ export function withTimeout<T>(work: Promise<T>, ms: number | undefined): Promis
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error('timed out')), ms)
   })
-  return Promise.race([work, late]).finally(() => clearTimeout(timer))
+  // Guarded, so the timer is a number to a worker's types as it is a Timeout to Node's (the worker's tests import this file).
+  return Promise.race([work, late]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
 }
 
 /**
@@ -207,7 +210,7 @@ export function graceTimer(ms: number): { over: Promise<void>; cancel(): void } 
   return {
     over,
     cancel: () => {
-      clearTimeout(timer)
+      if (timer !== undefined) clearTimeout(timer)
       end()
     },
   }

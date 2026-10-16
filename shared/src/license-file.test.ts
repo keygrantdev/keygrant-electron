@@ -264,3 +264,11 @@ describe('the licence file container', () => {
     expect(licenseFileToken(whole.subarray(6))).toBe('a.b.c')
   })
 })
+
+describe('a file and meters', () => {
+  it('signs no met: an offline file never checks in, so nothing it spends would ever be reported (sdk-contract.md 12.1)', async () => {
+    const met = { exports: { left: 5, total: 10, offline: 1 } }
+    await expect(signAny({ ...OFFLINE, met })).rejects.toBeInstanceOf(ZodError)
+    await expect(signAny({ ...KEY_FILE, met })).rejects.toBeInstanceOf(ZodError)
+  })
+})

@@ -44,6 +44,8 @@ import type { FirstGroup, GroupInputs, GroupName, IdentityJson } from './inputs.
 import { LATER } from './replay-later.js'
 import { KEYS } from './replay-keys.js'
 import { FILES } from './replay-files.js'
+import { USER_LOCK } from './replay-user-lock.js'
+import { METERS } from './replay-meters.js'
 import { scripted } from './scripted.js'
 
 // --- JSON ---------------------------------------------------------------------
@@ -338,9 +340,10 @@ const FIRST: { [G in FirstGroup]: Group<GroupInputs[G]> } = {
 /**
  * Every group: the first ones, then the later ones (`replay-later.ts`), then the
  * key-set groups (`replay-keys.ts`), then the licence-file groups
- * (`replay-files.ts`), in the order of the file.
+ * (`replay-files.ts`), then the user-lock groups (`replay-user-lock.ts`), then the
+ * metered-uses groups (`replay-meters.ts`), in the order of the file.
  */
-export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS, ...FILES }
+export const ANSWERS: { [G in GroupName]: Group<GroupInputs[G]> } = { ...FIRST, ...LATER, ...KEYS, ...FILES, ...USER_LOCK, ...METERS }
 
 /**
  * The same groups as a harness reading the file sees them: a vector's inputs

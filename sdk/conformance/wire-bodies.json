@@ -1,0 +1,98 @@
+{
+  "$comment": "The bodies a KeyGrant Electron SDK License sends with a report of unsynced spends: a use (its spend id written as a fixed one), a validate and a deactivate, captured over a fake HTTP adapter. The worker parses them with its schemas.",
+  "use": {
+    "key": "SLUICE-AAAA-BBBB-CCCC-DDDD",
+    "activationId": "act_1",
+    "major": 3,
+    "fingerprints": [
+      "fp-test"
+    ],
+    "meter": "exports",
+    "n": 2,
+    "id": "AAAAAAAAAAAAAAAAAAAAAA",
+    "spends": [
+      {
+        "id": "offlineoffline0000001",
+        "meter": "exports",
+        "n": 3,
+        "at": 1756992800000
+      },
+      {
+        "id": "unansweredunanswered2",
+        "meter": "renders",
+        "n": 1,
+        "at": 1756992800001
+      },
+      {
+        "id": "voidvoidvoidvoid00003",
+        "meter": "exports",
+        "n": 2,
+        "at": 1756992800002,
+        "void": true
+      }
+    ],
+    "kids": [
+      "49RQCYlHW28NrRKLwMsb5WJ6XcsSSTYgeym6B59JdY0"
+    ]
+  },
+  "validate": {
+    "key": "SLUICE-AAAA-BBBB-CCCC-DDDD",
+    "activationId": "act_1",
+    "major": 3,
+    "fingerprints": [
+      "fp-test"
+    ],
+    "spends": [
+      {
+        "id": "offlineoffline0000001",
+        "meter": "exports",
+        "n": 3,
+        "at": 1756992800000
+      },
+      {
+        "id": "unansweredunanswered2",
+        "meter": "renders",
+        "n": 1,
+        "at": 1756992800001
+      },
+      {
+        "id": "voidvoidvoidvoid00003",
+        "meter": "exports",
+        "n": 2,
+        "at": 1756992800002,
+        "void": true
+      }
+    ],
+    "kids": [
+      "49RQCYlHW28NrRKLwMsb5WJ6XcsSSTYgeym6B59JdY0"
+    ]
+  },
+  "deactivate": {
+    "key": "SLUICE-AAAA-BBBB-CCCC-DDDD",
+    "activationId": "act_1",
+    "spends": [
+      {
+        "id": "offlineoffline0000001",
+        "meter": "exports",
+        "n": 3,
+        "at": 1756992800000
+      },
+      {
+        "id": "unansweredunanswered2",
+        "meter": "renders",
+        "n": 1,
+        "at": 1756992800001
+      },
+      {
+        "id": "voidvoidvoidvoid00003",
+        "meter": "exports",
+        "n": 2,
+        "at": 1756992800002,
+        "void": true
+      }
+    ],
+    "fingerprints": [
+      "fp-test"
+    ]
+  }
+}

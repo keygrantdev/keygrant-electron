@@ -9,13 +9,15 @@ import {
   nodeFingerprinter,
   systemClock,
 } from './adapters.js'
-import type { Adapters, DeviceKind, LicenseConfig, LicenseStatus, StoredState } from './types.js'
+import type { Adapters, DeviceKind, LicenseConfig, StoredState } from './types.js'
 import { DeviceIdentityReader, type Device } from './device.js'
 import { MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
-import { checkLease, majorOf, merged, trialLeaseOf, type Asked, type Basis, type LeaseCheck, type TrialLease } from './offline.js'
+import { checkLease, majorOf, merged, trialLeaseOf, type Basis, type LeaseCheck, type TrialLease } from './offline.js'
 import { clockCorrection, guardedNow, savedLastSeen } from './clock.js'
-import { renewalOutcome, type ValidateResponse } from './renewal.js'
-import { graceTimer, parseLeaseBody, withTimeout, type Renewal } from './wire.js'
+import { boundedVoids, compacted, landJournal, type JournalOp } from './journal.js'
+import { spendsOf } from './meters.js'
+import type { SpendEntry } from './meter-types.js'
+import { graceTimer, withTimeout } from './wire.js'
 
 /**
  * How long past its HTTP bound a call may hold the next one waiting (`serial`):
@@ -26,9 +28,9 @@ export const LOCK_GRACE_MS = 15_000
 
 /**
  * The machinery under `License` (license.ts): the adapters, one call at a time,
- * every request bounded, the stored state and its clock guard, and the online
- * validate with what its answer does to the stored state. `License` decides
- * when to go online and what to answer.
+ * every request bounded, and the stored state with its clock guard and its
+ * journal of unsynced spends. The online validate is checkin.ts; `License`
+ * decides when to go online and what to answer.
  */
 export abstract class Engine {
   protected readonly product: string
@@ -52,6 +54,17 @@ export abstract class Engine {
   }
   /** Calls running with writes allowed that have not settled yet (`serial`). */
   private writing = 0
+  /**
+   * Journal changes (journal.ts) this process could not save: the disk refused them, or the call was behind
+   * one that has not finished. Kept for the process, in the state every read sees (`load`), and saved
+   * with the next save that can (`saveWith`), as a trial the disk refused is kept (trials.ts). A process
+   * that ends first loses the report, never the customer's use.
+   */
+  protected unsaved: JournalOp[] = []
+  /** The journals of the views `load` made with `unsaved` landed on them: a view that read held spends (`reportable`). */
+  private readonly carrying = new WeakSet<SpendEntry[]>()
+  /** Saves in flight (`saveWith`): while one is, `unsaved` is only added to, never folded (`keepUnsaved`). */
+  private saving = 0
 
   constructor(config: LicenseConfig) {
     this.product = config.product
@@ -134,6 +147,11 @@ export abstract class Engine {
     return withTimeout(this.a.http.post(url, body, { timeoutMs: bound }), bound)
   }
 
+  /** `ms`, or the configured HTTP bound when that is shorter: a call's own bound never outlasts it. */
+  protected boundedBy(ms: number): number {
+    return Math.min(ms, this.httpTimeoutMs)
+  }
+
   protected verify(lease: string, now: number): Promise<VerifyResult> {
     return this.keySet().then((keys) => verifyLease(lease, keys, now))
   }
@@ -193,9 +211,39 @@ export abstract class Engine {
     return this.deviceHold ? stored : undefined
   }
 
-  /** The stored state; `readOnly` behind a call that has not finished, so the read writes nothing either. */
-  protected async load(readOnly = false): Promise<StoredState> {
+  /** The stored state, as the storage has it. */
+  private async stored(readOnly = false): Promise<StoredState> {
     return (await this.a.storage.read({ readOnly })) ?? {}
+  }
+
+  /**
+   * The journal a request reports for `view` (the state a call read): the journal as stored, with what this
+   * process could not save (`unsaved`) that opens an entry of its own, once, by its id: an `unanswered` spend and
+   * a `void`. A spend held in memory that was made offline (`offline`) is withheld: it joins the entry of another
+   * when it lands (journal.ts `appended`), so a report of it under its own id would be counted a second time when
+   * the entry it joined is reported. It is reported once it has landed, which the next call that can save does. The
+   * entries the server has since confirmed are left out: there is no need to say again what it holds. A view that
+   * carried held spends (`load`) is judged the same, though they may have landed since.
+   */
+  protected async reportable(view: StoredState): Promise<SpendEntry[]> {
+    const carried = view.spends !== undefined && this.carrying.has(view.spends)
+    if (!carried && this.unsaved.length === 0) return spendsOf(view.spends)
+    const stored = await this.stored(true).catch(() => null)
+    if (stored === null || stored.activationId !== view.activationId) return []
+    const held = this.unsaved.filter((op) => op.kind === 'unanswered' || op.kind === 'void' || op.kind === 'confirmed')
+    return spendsOf(landJournal(stored, held, guardedNow(this.a.clock.now(), stored.lastSeen)).state.spends)
+  }
+
+  /**
+   * The stored state with the journal changes this process could not save (`unsaved`) landed on it, as
+   * they will be; `readOnly` behind a call that has not finished, so the read writes nothing either.
+   */
+  protected async load(readOnly = false): Promise<StoredState> {
+    const state = await this.stored(readOnly)
+    if (this.unsaved.length === 0) return state
+    const landed = landJournal(state, this.unsaved, guardedNow(this.a.clock.now(), state.lastSeen)).state
+    if (landed.spends !== undefined) this.carrying.add(landed.spends)
+    return landed
   }
 
   /**
@@ -211,13 +259,62 @@ export abstract class Engine {
    * process changed meanwhile (offline.ts `merged`).
    */
   protected async save(patch: Partial<StoredState>, guard?: number, basis?: Basis): Promise<void> {
-    const merge = (latest: StoredState): StoredState => ({
-      ...merged(latest, patch, basis),
-      lastSeen: savedLastSeen(latest.lastSeen, this.a.clock.now(), guard),
-    })
+    await this.saveWith(patch, guard, basis, [])
+  }
+
+  /**
+   * `save` with changes to the journal (`ops`), landed on the state as stored now (journal.ts `journaled`),
+   * after the ones this process could not save before. Whether each of `ops` was refused, the journal
+   * being full. Rejects when the save fails; the changes stay in `unsaved` until one lands.
+   */
+  protected async saveWith(patch: Partial<StoredState>, guard: number | undefined, basis: Basis | undefined, ops: readonly JournalOp[]): Promise<boolean[]> {
+    const before = this.unsaved.length
+    const all = [...this.unsaved, ...ops]
+    let refused: boolean[] = []
+    this.saving += 1
+    const merge = (latest: StoredState): StoredState => {
+      const clockNow = this.a.clock.now()
+      const landed = landJournal(latest, all, guardedNow(clockNow, latest.lastSeen))
+      refused = landed.refused
+      return { ...merged(landed.state, patch, basis), lastSeen: savedLastSeen(latest.lastSeen, clockNow, guard) }
+    }
     const { storage } = this.a
-    if (storage.update) return storage.update(merge)
-    await storage.write(merge(await this.load()))
+    try {
+      if (storage.update) await storage.update(merge)
+      else await storage.write(merge(await this.stored()))
+    } finally {
+      this.saving -= 1
+    }
+    this.unsaved = this.unsaved.slice(before)
+    return refused.slice(before)
+  }
+
+  /**
+   * `saveWith`, whose failure fails nothing: the changes it could not save are kept for this process
+   * (`unsaved`), those the journal had room for (judged on `view`, the state the call read, when the
+   * save failed). Whether each of `ops` was refused.
+   */
+  protected async saveOps(view: StoredState, patch: Partial<StoredState>, basis: Basis | undefined, ops: readonly JournalOp[]): Promise<boolean[]> {
+    try {
+      return await this.saveWith(patch, undefined, basis, ops)
+    } catch {
+      return this.keepUnsaved(view, ops)
+    }
+  }
+
+  /** Keep `ops` for this process (`unsaved`), those the journal has room for on `view`. Whether each was refused. */
+  protected keepUnsaved(view: StoredState, ops: readonly JournalOp[]): boolean[] {
+    const { refused } = landJournal(view, ops, guardedNow(this.a.clock.now(), view.lastSeen))
+    // A spend is told to the customer from here on: it lands whatever the journal holds by then (journal.ts `told`).
+    // A void is no spend told, so it is held to the journal's rules, and to the newest MAX_PENDING_VOIDS here.
+    this.unsaved.push(...ops.filter((_, i) => !refused[i]).map((op): JournalOp => (op.kind === 'offline' || op.kind === 'unanswered' ? { ...op, told: true } : op)))
+    if (this.saving === 0) this.unsaved = boundedVoids(compacted(this.unsaved))
+    return refused
+  }
+
+  /** Save what this process could not (`unsaved`), best-effort, at the start of a call that may write. */
+  protected async saveUnsavedJournal(): Promise<void> {
+    if (this.unsaved.length > 0) await this.saveBestEffort({})
   }
 
   /**
@@ -267,100 +364,6 @@ export abstract class Engine {
     if (corrected === null) return now
     await save({}, corrected)
     return corrected
-  }
-
-  /** Attempt an online validate; returns a status on a definitive answer, else null. */
-  protected async tryRenew(state: StoredState, timeoutMs?: number): Promise<LicenseStatus | null> {
-    const renewal = await this.renew(state, timeoutMs)
-    return renewal.answered ? renewal.status : null
-  }
-
-  /**
-   * An online validate, and whether the server gave a verdict. What its answer
-   * saves and says is renewal.ts `renewalOutcome`: any verdict (a lease, a
-   * refusal, a body it could not use) records the major it was sent as heard
-   * (`checkedMajor`), so the check of a newer major is not made again for it;
-   * an ask that came back without a lease starts the wait before the SDK asks
-   * again on its own (`askDue`): RETRY_UNANSWERED_MS when nothing answered at
-   * all (no network, a timeout), ASK_AGAIN_MS when the server did (a refusal, a
-   * 5xx, a 429, an answer it could not use).
-   */
-  protected async renew(state: StoredState, timeoutMs?: number): Promise<Renewal> {
-    // The wait runs on the device clock, as `askDue` reads it; the answer is
-    // stamped by the guarded one, which a clock put back does not move back,
-    // so an answer asked for later still reads as later to another process.
-    const askedAt = this.a.clock.now()
-    const asked: Asked = { at: this.effectiveNow(state), activationId: state.activationId, seen: state.verdictAt }
-    // A machine id read here keys this install from now on (`deviceKind`):
-    // written with whatever this ask writes, as the seat is re-keyed by it.
-    const device = await this.device(MACHINE_ID_TIMEOUT_MS, state.deviceKind)
-    // Outside the request's try: a key set that cannot be imported is the app's
-    // configuration, never an unanswered check-in.
-    const kids = await this.keyIds()
-    let response: ValidateResponse | null
-    try {
-      response = await this.post('validate', { ...this.validateBody(state, device), kids }, timeoutMs)
-    } catch {
-      response = null
-    }
-    const judged = await this.judgeFresh(state, response)
-    const { keptMajor, key } = state
-    const outcome = renewalOutcome({ response, ...judged, askedAt, major: this.major, key, keptMajor, device })
-    // Saved as the answer to its ask; a save that fails leaves the answer standing (`saveBestEffort`).
-    await this.saveBestEffort(outcome.patch, undefined, { answer: asked })
-    return outcome.answered ? { answered: true, status: outcome.status } : { answered: false }
-  }
-
-  /**
-   * The lease a validate's 200 carried, checked on this device (`evaluate`) as
-   * of the server's time (`serverNow`, the clock guard brought back best-effort:
-   * the server's time even when the state cannot be read or saved just now);
-   * no check for any other answer. With the time it was judged at.
-   */
-  private async judgeFresh(
-    state: StoredState,
-    response: ValidateResponse | null,
-  ): Promise<{ check?: LeaseCheck; now: number }> {
-    const lease = response?.status === 200 ? parseLeaseBody(response.json).lease : undefined
-    if (!lease) return { now: this.effectiveNow(state) }
-    const holder = { key: state.key ?? '', activationId: state.activationId ?? '', deviceKind: state.deviceKind }
-    return this.judged(lease, holder, this.effectiveNow(state))
-  }
-
-  /**
-   * A lease the server just answered, checked for `holder` on this device
-   * (`evaluate`) as of the server's time (`serverNow`, the clock guard brought
-   * back best-effort; `fallbackNow` when the state cannot be read or saved
-   * just now). With the time it was judged at.
-   */
-  protected async judged(
-    lease: string,
-    holder: { key: string; activationId: string; deviceKind?: DeviceKind },
-    fallbackNow: number,
-  ): Promise<{ check: LeaseCheck; now: number }> {
-    const saveGuard = async (patch: Partial<StoredState>, guard?: number) => {
-      await this.saveBestEffort(patch, guard)
-    }
-    const mine = { key: holder.key, activationId: holder.activationId }
-    const now = await this.serverNow(lease, mine, saveGuard).catch(() => fallbackNow)
-    return { check: await this.evaluate(lease, now, holder), now }
-  }
-
-  /**
-   * A validate's body. With every fingerprint this device answers to, when it
-   * can tell, so the server refuses a state file copied from another machine
-   * (`device`) before it touches the seat; with none when it cannot tell this
-   * time, so a slow read never costs an honest device its renewal.
-   */
-  private validateBody(state: StoredState, device: Device) {
-    return {
-      key: state.key,
-      activationId: state.activationId,
-      major: this.major,
-      ...(state.keptMajor !== undefined ? { keptMajor: state.keptMajor } : {}),
-      ...(device.canTell ? { fingerprints: device.fingerprints } : {}),
-      ...(device.canTell && device.kind ? { fingerprintKind: device.kind } : {}),
-    }
   }
 }
 

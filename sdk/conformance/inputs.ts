@@ -7,6 +7,8 @@
  */
 import type { LeaseClaims } from '@keygrant/shared'
 import type { Basis, LeaseCheck, LeaseHolder } from '../src/offline.js'
+import type { JournalOp, JournalState } from '../src/journal.js'
+import type { BaseFigure, MeterFigure, SpendEntry } from '../src/meter-types.js'
 import type { SignedAt } from '../src/clock.js'
 import type { HostNames } from '../src/adapters.js'
 import type { MachineIdReading } from '../src/machine-id.js'
@@ -151,6 +153,44 @@ export interface GroupInputs {
   licenseFiles: Named & { token: string; keys: JsonWebKey[]; product: string; major: number; revoked: string[] }
   /** A licence file given where a lease goes: verified and judged as `leases` does, and as a trial lease (`trialLeaseValid`). */
   filesAsLeases: LeaseVector
+  /**
+   * What `activate(key, options)` sends for what a person typed, or the error
+   * that refuses it before anything is sent (`typedFor`); an option that was not
+   * given is null.
+   */
+  typedFor: { email: string | null; code: string | null }
+  /** The word the server refused an activation with, and the error the SDK answers (`mapServerError`). */
+  userLockErrors: { error: unknown }
+  /** A lease's `met` claim as JSON text (null: the lease has none), and the meters a verifier reads of it (`metersOf`). */
+  meterClaims: Named & { json: string | null }
+  /** A lease carrying `met`, verified and judged as `leases` does: the claim read as `metersOf` reads it. */
+  meterLeases: LeaseVector
+  /**
+   * What `use(meter, n)` asks for (`askedFor`), or why it asks nothing; no `n` in the vector is an `n` not given.
+   * `jsOnly`: an `n` that no typed port's call can hold (a fraction, a text), skipped by every typed port.
+   */
+  useAmounts: Named & { meter: string; n?: unknown; jsOnly?: true }
+  /** The base figures of each meter (`figuresOf`): a lease's `met` as read, its `iat` (seconds) and the figures stored. */
+  meterFigures: Named & { met: Record<string, BaseFigure>; iat: number; figures: Record<string, MeterFigure> }
+  /** `status().meters` (`meterStatusOf`): base figures and the journal. */
+  meterStatuses: Named & { figures: Record<string, BaseFigure>; spends: SpendEntry[] }
+  /** Whether a spend with no answer is allowed (`offlineSpend`), and what is left. */
+  offlineSpends: Named & { figures: Record<string, BaseFigure>; spends: SpendEntry[]; meter: string; n: number }
+  /**
+   * Whether `use()` asks the server (`useAsksNow`): the stored wait and journal, the device clock and the guarded
+   * one, and whether the offline allowance covers the spend (`covered`; one it refuses always asks).
+   */
+  useAsks: Named & { state: Pick<StoredState, 'backoffSince' | 'backoffMs' | 'spends'>; clockNow: number; now: number; covered: boolean }
+  /** Whether `status()` asks a valid lease's server (`asksOnValidLease`), as `validLeaseAsks`, with a journal. */
+  syncAsks: GroupInputs['validLeaseAsks']
+  /** A `use` answer, and what the SDK saves and says of it (`useOutcome`). */
+  useOutcomes: Named & { response: { status: number; json: unknown } | null; askedAt: number; major: number; device: DeviceView }
+  /** One change to the journal landed on the state as stored (`journaled`). */
+  journals: Named & { latest: JournalState; op: JournalOp; now: number }
+  /** The report a body carries for a journal (`spendsReported`). */
+  spendReports: Named & { spends: SpendEntry[] }
+  /** The reports an answer names as recorded (`spendsConfirmed`). */
+  spendConfirmations: Named & { response: { status: number; json: unknown } | null }
 }
 
 /** A group's name. */
@@ -165,25 +205,32 @@ export type KeyGroup = 'keyIds' | 'keySets' | 'grants'
 /** The licence-file groups, which come after the key-set groups (`replay-files.ts`). */
 export type FileGroup = 'licenseFileContainers' | 'licenseFiles' | 'filesAsLeases'
 
-/** The groups before them (`replay.ts`). */
-export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup>
+/**
+ * The user-lock groups (the SDK contract, section 11), which come after the
+ * licence-file groups (`replay-user-lock.ts`). They were staged in a file of
+ * their own until every port answered them.
+ */
+export type UserLockGroup = 'typedFor' | 'userLockErrors'
 
 /**
- * The user-lock groups (the SDK contract, section 11), STAGED in a file
- * of their own (`sdk/conformance/user-lock.json`, `generate.ts`) until every
- * SDK answers them, when they move, unchanged, to the end of
- * `conformance/vectors.json`.
+ * The metered-uses groups (the SDK contract, section 12), which come after the
+ * user-lock groups (`replay-meters.ts`), at the end of the file. They were staged
+ * in a file of their own until every port answered them. An input that is not
+ * there is absent from the vector, or null where the group says so.
  */
-export interface UserLockGroupInputs {
-  /**
-   * What `activate(key, options)` sends for what a person typed, or the error
-   * that refuses it before anything is sent (`typedFor`); an option that was not
-   * given is null.
-   */
-  typedFor: { email: string | null; code: string | null }
-  /** The word the server refused an activation with, and the error the SDK answers (`mapServerError`). */
-  userLockErrors: { error: unknown }
-}
+export type MeterGroup =
+  | 'meterClaims'
+  | 'meterLeases'
+  | 'useAmounts'
+  | 'meterFigures'
+  | 'meterStatuses'
+  | 'offlineSpends'
+  | 'useAsks'
+  | 'syncAsks'
+  | 'useOutcomes'
+  | 'journals'
+  | 'spendReports'
+  | 'spendConfirmations'
 
-/** A user-lock group's name. */
-export type UserLockGroupName = keyof UserLockGroupInputs
+/** The groups before them (`replay.ts`). */
+export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup | UserLockGroup | MeterGroup>

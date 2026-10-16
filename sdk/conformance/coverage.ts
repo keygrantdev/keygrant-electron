@@ -13,6 +13,8 @@ import type { FirstGroup, GroupName } from './inputs.js'
 import { LATER_COVERAGE } from './coverage-later.js'
 import { KEY_COVERAGE } from './coverage-keys.js'
 import { FILE_COVERAGE } from './coverage-files.js'
+import { USER_LOCK_COVERAGE } from './coverage-user-lock.js'
+import { METER_COVERAGE } from './coverage-meters.js'
 import {
   answer,
   endSecond,
@@ -344,7 +346,8 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
 
 /**
  * Every group's facets: the first groups', then the later groups'
- * (`coverage-later.ts`), the key-set groups' (`coverage-keys.ts`) and the
- * licence-file groups' (`coverage-files.ts`).
+ * (`coverage-later.ts`), the key-set groups' (`coverage-keys.ts`), the
+ * licence-file groups' (`coverage-files.ts`), the user-lock groups'
+ * (`coverage-user-lock.ts`) and the metered-uses groups' (`coverage-meters.ts`).
  */
-export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE, ...FILE_COVERAGE }
+export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE, ...FILE_COVERAGE, ...USER_LOCK_COVERAGE, ...METER_COVERAGE }

@@ -21,7 +21,7 @@
 import { deepStrictEqual } from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { importVerifyingKeys, MAX_LICENSE_FILE_BYTES, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
+import { importVerifyingKeys, MAX_LICENSE_FILE_BYTES, MAX_METER_USES, OPEN_MAJOR, type VerifyingKey } from '@keygrant/shared'
 import { ASK_AGAIN_MS, RENEW_WITHIN_MS, RETRY_UNANSWERED_MS, TRIAL_REPORT_MS } from '../src/offline.js'
 import { CLOCK_TOLERANCE_MS } from '../src/clock.js'
 import { MAX_DEVICE_NAME, MAX_KEY, STATUS_CHECK_TIMEOUT_MS } from '../src/wire.js'
@@ -29,9 +29,14 @@ import { DEFAULT_HTTP_TIMEOUT_MS, KEEP_CORRUPT, STALE_TEMP_MS, UNKNOWN_HOST } fr
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, BOOT_SLACK_MS, MACHINE_ID_TIMEOUT_MS } from '../src/machine-id.js'
 import { LOCK_GRACE_MS } from '../src/engine.js'
 import { UPDATE_ATTEMPTS } from '../src/storage.js'
-import type { GroupInputs, GroupName, UserLockGroupInputs, UserLockGroupName } from './inputs.js'
+import { MAX_PENDING_SPENDS, MAX_PENDING_VOIDS, PENDING_MAX_MS, USE_TIMEOUT_MS } from '../src/meters.js'
+import type { GroupInputs, GroupName } from './inputs.js'
 import { GROUPS, type Group } from './replay.js'
-import { USER_LOCK_GROUPS } from './replay-user-lock.js'
+import { meterClaims, meterFigures, meterLeases, meterStatuses, offlineSpends, useAmounts } from './vectors/meters.js'
+import { syncAsks, useAsks } from './vectors/meter-asks.js'
+import { spendConfirmations, spendReports, useOutcomes } from './vectors/meter-answers.js'
+import { journals } from './vectors/meter-journal.js'
+import { wireBodies } from './bodies.js'
 import { typedFor, userLockErrors } from './vectors/user-lock.js'
 import { TEST_PUBLIC_JWK, context, type Context } from './vectors/common.js'
 import { leases } from './vectors/leases.js'
@@ -96,12 +101,20 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   licenseFileContainers,
   licenseFiles,
   filesAsLeases,
-}
-
-/** Every user-lock group's inputs, built: the staged file (`generateUserLock`). */
-const USER_LOCK_BUILDERS: { [G in UserLockGroupName]: () => UserLockGroupInputs[G][] } = {
   typedFor,
   userLockErrors,
+  meterClaims,
+  meterLeases,
+  useAmounts,
+  meterFigures,
+  meterStatuses,
+  offlineSpends,
+  useAsks,
+  syncAsks,
+  useOutcomes,
+  journals,
+  spendReports,
+  spendConfirmations,
 }
 
 const COMMENT =
@@ -129,6 +142,21 @@ const CONVENTIONS = [
   "licenseFileContainers.bytes is a file's content as canonical base64url (no padding); expect is the token it holds (licenseFileToken), or null when it is no licence file's container.",
   "licenseFiles: token verified against the key set keys (verifyLicenseFile; keys read as keySets.keys are), judged for product, the build's major and the denylist revoked (checkLicenseFile: expect is {ok, kind, test} or {ok, reason}); status is the status it gives when stored (licenseFileStatus). verify.claims are the claims as parsed: an offline file's ent read leniently, a key file's versions and entitlements not read.",
   "filesAsLeases: a licence file given where a lease goes, verified against publicJwk and judged as leases judges a lease (holder: this licence's key and activation, on a run that cannot tell its device), and as a trial lease for the same device (trial: trialLeaseValid).",
+  'typedFor: email and code are what a person typed for a user-locked key, null when they gave none. expect is {send: {email?, code?}}, each member only when there was one to send, or {refused: error}, the error activate answers at once, before anything is asked of the server.',
+  'The address is trimmed (as a key is: the whitespace a paste carries, a byte-order mark included) and sent as typed otherwise; a blank is none. One longer than 254 UTF-16 units after the trim (an astral character is two) is refused user-email-mismatch. The code has its ends trimmed and then its spaces (U+0020) dropped, and a blank is none; what remains must be exactly six ASCII digits (0 to 9), else it is refused user-code-invalid. The address is judged before the code.',
+  'userLockErrors: error is the error word of a refused activation, as the server writes it (null or a number for a body that has none); expect is the error activate answers, every word of a user lock as itself and any other word as network.',
+  'meterClaims: json is the JSON text of a lease\'s met claim (null: the lease has none), read by a JSON reader that reads every number as a double (-0 is 0; 1e400, out of a double\'s range, is infinity and no whole number); expect is the meters as read (metersOf): each member of an object whose left, total and offline are each a non-negative whole number of at most 2^53 - 1, with resets true only for JSON true; every other member is dropped, and anything that is not an object reads as none. Names are kept as they are, __proto__ included. The server\'s caps are not enforced.',
+  'meterLeases: as leases. verify.claims carries met only when the lease has the claim, as read by metersOf (an empty object for one that is not an object).',
+  'useAmounts: meter and n as the app gave them; a vector with no n is a call that gave none. expect is {meter, n} or {refused: invalid-amount | no-meter}, the answer use() gives at once, asking nothing. The amount is judged before the code. jsOnly: an n no typed port\'s call can hold (a fraction, a text), skipped by every typed port. A code is counted in UTF-16 units.',
+  'meterFigures: met is the lease\'s met as read, iat its signing time in seconds, figures the stored meterFigures. expect is the base figures of each meter: its stored figure when that figure\'s at is at or after iat x 1000, else the lease\'s, else none.',
+  'meterStatuses: figures are base figures and spends the journal; expect is status().meters: for each meter with a figure, left net of the unsynced spends (the n of its offline and unanswered entries, never a void) and never below 0.',
+  'offlineSpends: expect is {ok: true, left, limit}, {ok: false, error: no-meter} or {ok: false, error: offline-limit, left}: allowed when the unsynced spends with n are at most the allowance and n is at most what is left; limit is the most the meter\'s unsynced spends may come to with the spend (the smaller of the allowance and what is left), which the journal judges again where the spend lands.',
+  'useAsks: state holds the stored wait (backoffSince, backoffMs) and journal (spends); clockNow is the device clock, which the wait of a request that got no answer is judged by, and now the guarded clock, which the journal\'s wait is judged by. covered is whether the offline allowance would cover the spend (offlineSpends allows it): a spend it refuses always asks, whatever the waits. An unanswered or void entry opened after now is no wait that can be measured, and is left out of the journal\'s wait, of its count and of its newest. A spend the allowance refuses still waits for one wait of its own: a void opened less than RETRY_UNANSWERED_MS before now, none ahead of now counted. expect is whether use() asks the server.',
+  'syncAsks: as validLeaseAsks, with a journal in the state: a valid lease asks also when the journal holds an entry while its wait is not running.',
+  'useOutcomes: response is the answer to a use request (null when there was none at all); askedAt is the device clock when it was asked. expect is {outcome: spent | used-up | no-meter | refused | unanswered, refusal?, left?, patch, figures, confirmed}: patch what is saved as the answer to the ask (null clears a field), figures the figures saved (code to {left, total, offline, resets, at}), confirmed the reports the answer names as recorded.',
+  'journals: op is one change to the journal about the activation it names (about); expect is the journal and the figures after it, as {spends, meterFigures, refused}: refused is true for a spend the full journal could not take (64 entries), or that would take its meter\'s unsynced spends (the n of its offline and unanswered entries) past the op\'s limit. A void that finds MAX_PENDING_VOIDS voids already held (in the constants) takes the place of the oldest, and is not refused for it. An op with told, a spend the customer was told was made while a failed save kept it in memory, lands whatever the limit and the cap say. An empty journal is spends [] and no figures is {}.',
+  'spendReports: expect is the report a body carries for the journal, oldest first with a void marked, at most 64 entries, or null for none.',
+  'spendConfirmations: expect is the reports an answer names as recorded, in order, read leniently: a member of another shape is left out. No answer at all, a 5xx and a 429 name none.',
 ]
 
 export async function generate() {
@@ -162,6 +190,11 @@ export async function generate() {
       UNKNOWN_HOST,
       TRIAL_REPORT_MS,
       MAX_LICENSE_FILE_BYTES,
+      MAX_METER_USES,
+      MAX_PENDING_SPENDS,
+      MAX_PENDING_VOIDS,
+      PENDING_MAX_MS,
+      USE_TIMEOUT_MS,
     },
     ...groups,
   }
@@ -188,34 +221,14 @@ async function answered(
   return vectors
 }
 
-const USER_LOCK_COMMENT =
-  'User-lock vectors, generated from the KeyGrant Electron SDK (the reference), STAGED here until every port answers them (U2): then their groups move, unchanged, to the end of conformance/vectors.json. Every KeyGrant SDK that takes an email and a code at activation must reproduce every answer: "expect".'
-
-const USER_LOCK_CONVENTIONS = [
-  'The conventions of conformance/vectors.json hold here.',
-  'typedFor: email and code are what a person typed for a user-locked key, null when they gave none. expect is {send: {email?, code?}}, each member only when there was one to send, or {refused: error}, the error activate answers at once, before anything is asked of the server.',
-  'The address is trimmed (as a key is: the whitespace a paste carries, a byte-order mark included) and sent as typed otherwise; a blank is none. One longer than 254 characters after the trim is refused user-email-mismatch. The code has its ends trimmed and then its spaces (U+0020) dropped, and a blank is none; what remains must be exactly six ASCII digits (0 to 9), else it is refused user-code-invalid. The address is judged before the code.',
-  'userLockErrors: error is the error word of a refused activation, as the server writes it (null or a number for a body that has none); expect is the error activate answers, every word of a user lock as itself and any other word as network.',
-]
-
-/** The staged user-lock vectors, each answered from its JSON as `generate` answers the others. */
-export async function generateUserLock() {
-  const verifying = await importVerifyingKeys([TEST_PUBLIC_JWK as JsonWebKey])
-  const groups: Record<string, unknown[]> = {}
-  for (const group of Object.keys(USER_LOCK_GROUPS) as UserLockGroupName[]) {
-    groups[group] = await answered(group, USER_LOCK_GROUPS[group], USER_LOCK_BUILDERS[group](), verifying)
-  }
-  return { $comment: USER_LOCK_COMMENT, conventions: USER_LOCK_CONVENTIONS, ...groups }
-}
-
 export const VECTORS_PATH = fileURLToPath(new URL('../../conformance/vectors.json', import.meta.url))
-/** The staged user-lock vectors: beside the generator, in sdk/, so the Electron SDK's own repository carries them. */
-export const USER_LOCK_VECTORS_PATH = fileURLToPath(new URL('./user-lock.json', import.meta.url))
+/** The requests a License sends with a report of unsynced spends, captured (bodies.ts); the worker's suite parses them. */
+export const WIRE_BODIES_PATH = fileURLToPath(new URL('./wire-bodies.json', import.meta.url))
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const files: [string, unknown][] = [
     [VECTORS_PATH, await generate()],
-    [USER_LOCK_VECTORS_PATH, await generateUserLock()],
+    [WIRE_BODIES_PATH, await wireBodies()],
   ]
   for (const [path, vectors] of files) {
     writeFileSync(path, `${JSON.stringify(vectors, null, 2)}\n`)

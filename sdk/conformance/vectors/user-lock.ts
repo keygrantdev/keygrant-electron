@@ -4,7 +4,7 @@
  * words the server refuses a new device with (`mapServerError`).
  */
 import { MAX_EMAIL } from '../../src/wire.js'
-import type { UserLockGroupInputs } from '../inputs.js'
+import type { GroupInputs } from '../inputs.js'
 
 /** An address of exactly `length` characters. */
 function addressOf(length: number): string {
@@ -12,7 +12,7 @@ function addressOf(length: number): string {
   return `${'a'.repeat(length - tail.length)}${tail}`
 }
 
-export function typedFor(): UserLockGroupInputs['typedFor'][] {
+export function typedFor(): GroupInputs['typedFor'][] {
   const email = 'Mara@Studio.example'
   const pairs: [string | null, string | null][] = [
     [null, null],
@@ -35,9 +35,9 @@ export function typedFor(): UserLockGroupInputs['typedFor'][] {
     [`${'a'.repeat(MAX_EMAIL - 2)}\u{1F600}`, null],
     [`${'a'.repeat(MAX_EMAIL - 1)}\u{1F600}`, null],
     // Trimmed as a key is: every Unicode space and the line terminators, not only ASCII ones.
-    [' mara@studio.example ', null],
-    ['　mara@studio.example ', null],
-    ['  　', null],
+    ['\u00a0mara@studio.example\u2003', null],
+    ['\u3000mara@studio.example\u2028', null],
+    ['\u00a0\u2003\u3000', null],
     // The code alone: six digits, with the spaces a person types between them.
     [null, '123456'],
     [null, '000042'],
@@ -48,10 +48,10 @@ export function typedFor(): UserLockGroupInputs['typedFor'][] {
     [null, ''],
     [null, '  '],
     // Its ends trimmed as a key's are (every Unicode space), but only U+0020 dropped inside.
-    [null, ' 123456 '],
-    [null, '　123 456 '],
-    [null, '123 456'],
-    [null, '123 456'],
+    [null, '\u00a0123456\u00a0'],
+    [null, '\u3000123 456\u2003'],
+    [null, '123\u00a0456'],
+    [null, '123\u2003456'],
     // Not a code: too few, too many, not digits, other separators, other scripts.
     [null, '12345'],
     [null, '1234567'],
@@ -87,7 +87,7 @@ const USER_LOCK_WORDS = [
   'try-again',
 ]
 
-export function userLockErrors(): UserLockGroupInputs['userLockErrors'][] {
+export function userLockErrors(): GroupInputs['userLockErrors'][] {
   // The old words still read as they did, the unknown as a network failure, and none of the near misses as a word.
   const others = ['limit', 'rate-limited', 'unavailable', 'too-many-requests', 'user-code', 'User-Code-Invalid', 'try_again', 'something-new']
   return [...USER_LOCK_WORDS, ...others, null, 42].map((error) => ({ error }))

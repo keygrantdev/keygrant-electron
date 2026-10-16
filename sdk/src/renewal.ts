@@ -26,6 +26,7 @@ import {
   renewsEarly,
   type LeaseCheck,
 } from './offline.js'
+import { journalAsks } from './meters.js'
 import { errorOf, noAnswer, parseLeaseBody, refusalOf } from './wire.js'
 
 /** What a validate came back with: its HTTP status, and its body as JSON (null or undefined when it had none). */
@@ -158,9 +159,11 @@ export interface ValidLeaseAsk {
  * server now (unforced; `refresh()` always asks). When the server should hear
  * from this device before the lease runs out: a newer major than the server
  * last heard, on an open lease (`major >= OPEN_MAJOR`; else it might not hear
- * of it until the key's upgrade window has closed), or a lease nearing its end
+ * of it until the key's upgrade window has closed), a lease nearing its end
  * (`renewsEarly`, by the guarded clock), renewed early so it rarely runs out
- * while the device is offline. And only once the wait after the last ask is
+ * while the device is offline, or a journal of spends KeyGrant has not heard of
+ * while its own wait is not running (`journalAsks`), so a device back online
+ * reports at its next status. And only once the wait after the last ask is
  * over (`askDue`, by the device clock). The ask is bounded
  * (STATUS_CHECK_TIMEOUT_MS) and the valid lease is the answer when it gets no
  * verdict.
@@ -168,6 +171,6 @@ export interface ValidLeaseAsk {
 export function asksOnValidLease(input: ValidLeaseAsk): boolean {
   const { claims, state, major } = input
   const newMajor = claims.major >= OPEN_MAJOR && major > (state.checkedMajor ?? 0)
-  const due = newMajor || renewsEarly(claims, input.now)
+  const due = newMajor || renewsEarly(claims, input.now) || journalAsks(state.spends, input.now)
   return due && askDue(state, input.clockNow, false)
 }

@@ -8,7 +8,7 @@
  * `License` decides when.
  */
 import type { StoredState, LicenseStatus } from './types.js'
-import { Engine } from './engine.js'
+import { CheckinEngine } from './checkin.js'
 import { ACTIVATE_MACHINE_ID_TIMEOUT_MS, MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
 import {
   ASK_AGAIN_MS,
@@ -49,7 +49,7 @@ export function launchReportSettled(engine: TrialEngine): Promise<void> {
   return reports.get(engine) ?? Promise.resolve()
 }
 
-export abstract class TrialEngine extends Engine {
+export abstract class TrialEngine extends CheckinEngine {
   /**
    * The server's trial when it could not be saved (`startTrial`), kept for this
    * process: merged into every state a status reads, and saved by the next
