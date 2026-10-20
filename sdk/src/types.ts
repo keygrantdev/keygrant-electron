@@ -139,6 +139,61 @@ export interface ActivateOptions {
 }
 
 /**
+ * Why a pickup call (sdk-contract.md section 13) did not do what it asked.
+ * `invalid-email`: no address, or one that cannot be one. `wrong-code`: not
+ * the code mailed (or not six digits); ask again. `code-expired`: no live code
+ * for the address (it expired, was used, or none was asked for); ask for a new
+ * one. `too-many-attempts`: too many asks or confirms from this network, or
+ * thirty wrong codes for the address this hour; wait `retryAfter` seconds when given.
+ * `pickup-disabled`: the product's Key pickup is off. `try-again`: KeyGrant
+ * could not take the ask just now. `network`: no answer.
+ */
+export type PickupError = 'invalid-email' | 'wrong-code' | 'code-expired' | 'too-many-attempts' | 'pickup-disabled' | 'try-again' | 'network'
+
+/** What `pickUp(email)` did: the code is on its way when the address holds a key, and the answer is the same when it does not. */
+export type PickUpSentResult = { ok: true; sent: true } | { ok: false; error: PickupError; retryAfter?: number }
+
+/**
+ * One key a pickup handed back: enough for the app to let the customer pick one
+ * (its model, what it grants, its versions, its seats), never shown as a key.
+ * Activate it with `activate(picked.key, { email, code: picked.activationCode })`,
+ * or let `restoreByEmail` choose and activate one.
+ */
+export interface PickedKey {
+  key: string
+  /** 'perpetual' | 'subscription' | 'trial' | 'timed'. */
+  model: string
+  /** The licence model it was sold under, when it was: the name to show. */
+  modelName: string | null
+  /** 'active' | 'trial'. */
+  state: string
+  entitlements: Entitlements
+  /** When it ends (ms); null for a key that does not. */
+  expiresAt: number | null
+  /** The majors it covers; null for a key sold without a version, which takes the version of the first build to activate it. */
+  versions: { minMajor: number; maxMajor: number | null; upgradeUntil: number | null } | null
+  deviceLimit: number
+  activeDevices: number
+  /** This device holds a seat on it already: activating it takes that seat back. */
+  held: boolean
+  /** The sale of several keys it is one of. */
+  sale?: { id: string; index: number; size: number }
+  /** The code a user-locked key's activation takes, already proven by the pickup. */
+  activationCode?: string
+}
+
+/** What `pickUp(email, code)` did: the address's keys of the product, or why not. */
+export type PickUpKeysResult = { ok: true; keys: PickedKey[] } | { ok: false; error: PickupError; retryAfter?: number }
+
+/**
+ * What `restoreByEmail(email, code)` did: a key of the address activated on this
+ * device, or why not. `no-key`: the address holds no live key of the product;
+ * `upgrade` / `outdated`: it holds keys, none for this build's major. Every
+ * other error is a pickup's or an activation's.
+ */
+export type RestoreResult = { ok: true } | { ok: false; error: PickupError | LicenseError | 'no-key'; retryAfter?: number }
+
+/**
  * Why a licence file was not taken (`importLicenseFile`). `malformed`: not a
  * licence file's text, or its token or claims are broken. `not-a-license-file`:
  * a signed token, but not a licence file (a lease, say). `bad-signature`: not

@@ -1,6 +1,6 @@
 {
   "name": "@keygrant/electron",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "KeyGrant licensing for Electron and Node desktop apps: signed leases verified offline, fail-in-favour-of-the-customer.",
   "license": "MIT",
   "author": "KeyGrant",

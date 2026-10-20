@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0
+
+- Key pickup, for a build that may not take a typed key (an App Store build): `pickUp(email)` asks KeyGrant
+  to mail a code to the address, answered `{ ok: true, sent: true }` whether or not the address holds a key;
+  `pickUp(email, code)` answers that address's live keys of the product (`PickedKey`: its model, what it
+  grants, its versions, its seats, whether this device already holds one); `restoreByEmail(email, code)`
+  confirms and activates the key that fits this build (the one this device holds, else one with a free seat,
+  else the first), never handing the key to the app. A user-locked key activates with the address, and a
+  code-locked one with the code the pickup proved, so nothing more is asked. Errors: `invalid-email`,
+  `wrong-code`, `code-expired`, `too-many-attempts` (with `retryAfter`), `pickup-disabled`, `try-again`,
+  `network`, and from a restore `no-key`, `upgrade` and `outdated`, then `activate()`'s own. The product's
+  Key pickup must be on. Nothing about a pickup is stored. The new types `PickedKey`, `PickupError`,
+  `PickUpSentResult`, `PickUpKeysResult` and `RestoreResult` are exported.
+
 ## 0.8.0
 
 - Metered uses: `use(meter, n = 1)` spends `n` uses of a meter the key's licence model counts (1,000

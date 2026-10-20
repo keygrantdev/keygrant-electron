@@ -7,6 +7,7 @@ import { GROUPS } from '../conformance/replay.js'
 import { FILES } from '../conformance/replay-files.js'
 import { METERS } from '../conformance/replay-meters.js'
 import { USER_LOCK } from '../conformance/replay-user-lock.js'
+import { PICKUP } from '../conformance/replay-pickup.js'
 import { COVERAGE } from '../conformance/coverage.js'
 import { FILE_COVERAGE } from '../conformance/coverage-files.js'
 import { METER_COVERAGE } from '../conformance/coverage-meters.js'
@@ -25,8 +26,12 @@ import { METER_COVERAGE } from '../conformance/coverage-meters.js'
 type Vector = Record<string, unknown> & { name?: string }
 const committed = (): Record<string, unknown> => JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as Record<string, unknown>
 
-/** How many groups the metered-uses vectors are, which close the file. */
+/** How many groups the key-pickup vectors are, which close the file. */
+const PICKUP_GROUP_COUNT = Object.keys(PICKUP).length
+/** How many groups the metered-uses vectors are, just before them. */
 const METER_GROUP_COUNT = Object.keys(METERS).length
+/** How many groups come after the user-lock vectors. */
+const AFTER_USER_LOCK = METER_GROUP_COUNT + PICKUP_GROUP_COUNT
 
 // Generating every vector signs and verifies hundreds of leases: well inside a second
 // alone, but past vitest's five on a machine busy with other builds.
@@ -106,7 +111,7 @@ describe('the licence-file vectors', () => {
   it('are the groups just before the user-lock groups, in their order, so every group before them is as it was', () => {
     const file = committed()
     const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
-    expect(groups.slice(-5 - METER_GROUP_COUNT, -2 - METER_GROUP_COUNT)).toEqual(Object.keys(FILES))
+    expect(groups.slice(-5 - AFTER_USER_LOCK, -2 - AFTER_USER_LOCK)).toEqual(Object.keys(FILES))
   })
 
   it('tell every vector apart by its rule, so deleting any one of them fails the coverage', () => {
@@ -125,15 +130,15 @@ describe('the user-lock vectors', () => {
   it('are the groups just before the metered-uses groups, in their order, so every group before them is as it was', () => {
     const file = committed()
     const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
-    expect(groups.slice(-2 - METER_GROUP_COUNT, -METER_GROUP_COUNT)).toEqual(Object.keys(USER_LOCK))
+    expect(groups.slice(-2 - AFTER_USER_LOCK, -AFTER_USER_LOCK)).toEqual(Object.keys(USER_LOCK))
   })
 })
 
 describe('the metered-uses vectors', () => {
-  it('are the last groups of the file, in their order, so every group before them is as it was', () => {
+  it('are the groups just before the key-pickup groups, in their order, so every group before them is as it was', () => {
     const file = committed()
     const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
-    expect(groups.slice(-METER_GROUP_COUNT)).toEqual(Object.keys(METERS))
+    expect(groups.slice(-AFTER_USER_LOCK, -PICKUP_GROUP_COUNT)).toEqual(Object.keys(METERS))
   })
 
   it('keep the constants the ports need, beside the file’s own', () => {
@@ -156,5 +161,13 @@ describe('the metered-uses vectors', () => {
 describe('the request bodies a License sends with a report', () => {
   it('are the committed file’s: regenerating them from a License over a fake adapter gives the file the worker’s test parses', HEAVY, async () => {
     expect(JSON.parse(JSON.stringify(await wireBodies()))).toEqual(JSON.parse(readFileSync(WIRE_BODIES_PATH, 'utf8')))
+  })
+})
+
+describe('the key-pickup vectors', () => {
+  it('are the last groups of the file, in their order, so every group before them is as it was', () => {
+    const file = committed()
+    const groups = Object.keys(file).filter((k) => Array.isArray(file[k]) && k !== 'conventions')
+    expect(groups.slice(-PICKUP_GROUP_COUNT)).toEqual(Object.keys(PICKUP))
   })
 })

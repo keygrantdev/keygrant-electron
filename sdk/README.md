@@ -68,6 +68,33 @@ const result = await license.activate(enteredKey)
 For a customer who already holds a key, `upgradeUrl(link)` adds this install's
 activation to the link, so an upgrade sale finds the key it upgrades.
 
+## Restoring a licence without the key (App Store builds)
+
+Apple's App Store rules forbid an app from unlocking itself with a typed key.
+Key pickup restores a web buyer's licence by the address the key was sold to
+instead: KeyGrant mails a six-digit code there, the customer types it, and the
+SDK activates the key that fits this build. The key is never shown. Turn on Key
+pickup on the product's Settings first (`pickup-disabled` otherwise).
+
+```ts
+await license.pickUp(email) // { ok: true, sent: true }, whatever the address
+// The customer types the code from the email:
+const result = await license.restoreByEmail(email, code)
+```
+
+`restoreByEmail` picks the key this device already holds a seat on, else one
+with a free seat, else the first, and answers `no-key` when the address holds
+none, `upgrade` or `outdated` when none covers this build's major, and
+otherwise as `activate()` does. The pickup's errors: `invalid-email`,
+`wrong-code` (ask again), `code-expired` (ask for a new code), `too-many-attempts`
+(wait `retryAfter` seconds), `pickup-disabled`, `try-again` and `network`. To let
+the customer choose among several keys, `pickUp(email, code)` answers them as
+`PickedKey`s (show each by its `modelName`), and
+`activate(picked.key, { email, code: picked.activationCode })` activates the one
+chosen. Nothing about a pickup is stored. Your App Store build must still sell
+its unlock as an in-app purchase (Apple 3.1.3(b)); KeyGrant mints no key from
+one.
+
 ## Keys only their buyer can activate
 
 A licence model can be **user-locked**: a NEW device activates on a key only when

@@ -15,6 +15,7 @@ import { KEY_COVERAGE } from './coverage-keys.js'
 import { FILE_COVERAGE } from './coverage-files.js'
 import { USER_LOCK_COVERAGE } from './coverage-user-lock.js'
 import { METER_COVERAGE } from './coverage-meters.js'
+import { PICKUP_COVERAGE } from './coverage-pickup.js'
 import {
   answer,
   endSecond,
@@ -350,4 +351,4 @@ const FIRST_COVERAGE: Record<FirstGroup, Record<string, Facet>> = {
  * licence-file groups' (`coverage-files.ts`), the user-lock groups'
  * (`coverage-user-lock.ts`) and the metered-uses groups' (`coverage-meters.ts`).
  */
-export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE, ...FILE_COVERAGE, ...USER_LOCK_COVERAGE, ...METER_COVERAGE }
+export const COVERAGE: Record<GroupName, Record<string, Facet>> = { ...FIRST_COVERAGE, ...LATER_COVERAGE, ...KEY_COVERAGE, ...FILE_COVERAGE, ...USER_LOCK_COVERAGE, ...METER_COVERAGE, ...PICKUP_COVERAGE }

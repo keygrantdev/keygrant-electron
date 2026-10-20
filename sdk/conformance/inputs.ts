@@ -12,7 +12,7 @@ import type { BaseFigure, MeterFigure, SpendEntry } from '../src/meter-types.js'
 import type { SignedAt } from '../src/clock.js'
 import type { HostNames } from '../src/adapters.js'
 import type { MachineIdReading } from '../src/machine-id.js'
-import type { DeviceKind, Refusal, StoredState } from '../src/types.js'
+import type { DeviceKind, PickedKey, Refusal, StoredState } from '../src/types.js'
 import type { ScriptedSource } from './scripted.js'
 
 /** A vector with a name, which only says what it is. */
@@ -191,6 +191,18 @@ export interface GroupInputs {
   spendReports: Named & { spends: SpendEntry[] }
   /** The reports an answer names as recorded (`spendsConfirmed`). */
   spendConfirmations: Named & { response: { status: number; json: unknown } | null }
+  /**
+   * What a pickup call sends for what a person typed, or the error that refuses
+   * it before anything is sent (`pickupAsk`): `code` null is the ask for a code,
+   * a code (even a blank one) a confirm.
+   */
+  pickupAsks: { email: string; code: string | null }
+  /** A refused pickup call's body as parsed (null: none), and the error it answers (`pickupRefusal`). */
+  pickupRefusals: { json: unknown }
+  /** A confirm's 200 body as parsed, and the keys read of it (`pickedKeysOf`). */
+  pickedKeys: { json: unknown }
+  /** The key a restore activates, by its place (`chosenKey`): keys as read, the build's major, and when (ms). */
+  pickupChoices: { keys: PickedKey[]; major: number; now: number }
 }
 
 /** A group's name. */
@@ -232,5 +244,8 @@ export type MeterGroup =
   | 'spendReports'
   | 'spendConfirmations'
 
+/** The key-pickup groups (the SDK contract, section 13), which come after the metered-uses groups (`replay-pickup.ts`), at the end of the file. */
+export type PickupGroup = 'pickupAsks' | 'pickupRefusals' | 'pickedKeys' | 'pickupChoices'
+
 /** The groups before them (`replay.ts`). */
-export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup | UserLockGroup | MeterGroup>
+export type FirstGroup = Exclude<GroupName, LaterGroup | KeyGroup | FileGroup | UserLockGroup | MeterGroup | PickupGroup>

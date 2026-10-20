@@ -6,11 +6,14 @@ import type {
   ImportLicenseFileResult,
   LicenseConfig,
   LicenseStatus,
+  PickUpKeysResult,
+  PickUpSentResult,
   Refusal,
+  RestoreResult,
   StoredState,
   UseResult,
 } from './types.js'
-import { SeatEngine } from './seats.js'
+import { PickupEngine } from './pickup-engine.js'
 import { MACHINE_ID_TIMEOUT_MS } from './machine-id.js'
 import { askDue, keptWith, leaseStatus, standingRefusal } from './offline.js'
 import { meteredStatus } from './meters.js'
@@ -45,7 +48,7 @@ import { MissingEntitlementError, grants } from './entitlements.js'
  * A stored offline licence file that licenses this build answers before all
  * of that, and never goes online (files.ts).
  */
-export class License extends SeatEngine {
+export class License extends PickupEngine {
   /** The device name an activation reports, cut to what the server takes. */
   protected readonly deviceName: string | undefined
 
@@ -79,6 +82,36 @@ export class License extends SeatEngine {
     // Behind a call that has not settled (engine.ts `serial`), nothing may be
     // written: the activation is answered as not reaching the server, to retry.
     return this.serial(async (readOnly) => (readOnly ? { ok: false, error: 'network' } : this.activateNow(key, options ?? {})))
+  }
+
+  /**
+   * Key pickup (sdk-contract.md section 13), for a build that may not take a
+   * typed key (an App Store build): with an address alone, ask KeyGrant to mail
+   * a code to it, answered the same whether or not it holds a key of the
+   * product; with the code that came, that address's live keys of the product,
+   * for the app to let the customer pick one by its model (never shown as a
+   * key). Needs the product's Key pickup on (`pickup-disabled` otherwise).
+   * Writes nothing and never rejects; `restoreByEmail` confirms and activates
+   * in one call.
+   */
+  pickUp(email: string): Promise<PickUpSentResult>
+  pickUp(email: string, code: string): Promise<PickUpKeysResult>
+  pickUp(email: string, code?: string): Promise<PickUpSentResult | PickUpKeysResult> {
+    return code === undefined ? this.requestPickup(email) : this.confirmPickup(email, code)
+  }
+
+  /**
+   * Confirm a pickup's code and activate, on this device, the key of the
+   * address that fits this build: the one it already holds a seat on, else one
+   * with a free seat, else the first (sdk-contract.md section 13). The key is
+   * never handed to the app. A user-locked key activates with the address, and
+   * a code-locked one with the code the pickup proved, so nothing more is asked.
+   * Answers `no-key` when the address holds none, `upgrade` or `outdated` when
+   * none covers this build, and otherwise as `pickUp(email, code)` and
+   * `activate()` do; rejects only where `activate()` does.
+   */
+  restoreByEmail(email: string, code: string): Promise<RestoreResult> {
+    return this.serial(async (readOnly) => (readOnly ? { ok: false, error: 'network' } : this.restoreNow(email, code)))
   }
 
   /**

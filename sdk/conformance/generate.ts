@@ -38,6 +38,7 @@ import { spendConfirmations, spendReports, useOutcomes } from './vectors/meter-a
 import { journals } from './vectors/meter-journal.js'
 import { wireBodies } from './bodies.js'
 import { typedFor, userLockErrors } from './vectors/user-lock.js'
+import { pickedKeys, pickupAsks, pickupChoices, pickupRefusals } from './vectors/pickup.js'
 import { TEST_PUBLIC_JWK, context, type Context } from './vectors/common.js'
 import { leases } from './vectors/leases.js'
 import { trials } from './vectors/trials.js'
@@ -115,6 +116,10 @@ const BUILDERS: { [G in GroupName]: (ctx: Context) => GroupInputs[G][] | Promise
   journals,
   spendReports,
   spendConfirmations,
+  pickupAsks,
+  pickupRefusals,
+  pickedKeys,
+  pickupChoices,
 }
 
 const COMMENT =
@@ -157,6 +162,10 @@ const CONVENTIONS = [
   'journals: op is one change to the journal about the activation it names (about); expect is the journal and the figures after it, as {spends, meterFigures, refused}: refused is true for a spend the full journal could not take (64 entries), or that would take its meter\'s unsynced spends (the n of its offline and unanswered entries) past the op\'s limit. A void that finds MAX_PENDING_VOIDS voids already held (in the constants) takes the place of the oldest, and is not refused for it. An op with told, a spend the customer was told was made while a failed save kept it in memory, lands whatever the limit and the cap say. An empty journal is spends [] and no figures is {}.',
   'spendReports: expect is the report a body carries for the journal, oldest first with a void marked, at most 64 entries, or null for none.',
   'spendConfirmations: expect is the reports an answer names as recorded, in order, read leniently: a member of another shape is left out. No answer at all, a 5xx and a 429 name none.',
+  'pickupAsks: email and code are what a person typed for pickUp; code null is pickUp(email), the ask for a code, and a code (a blank one included) is pickUp(email, code), a confirm. expect is {send: {email, code?}} or {refused: error}, the error the call answers at once. The address is entered as typedFor enters it: trimmed, a blank one invalid-email, as is one longer than 254 UTF-16 units after the trim. The code is entered as typedFor enters it, and a blank one or one that is not six ASCII digits is wrong-code. The address is judged first.',
+  'pickupRefusals: json is the body of a pickup call answered with anything but a 200 (null for none). expect is {error, retryAfter?}: pickup-disabled, wrong-code, code-expired, too-many-attempts and try-again as themselves, rate-limited as too-many-attempts, unavailable as try-again, invalid-request as invalid-email, and anything else (another word, a word not text, no body, a body not an object) as network. retryAfter is kept only on too-many-attempts and try-again, and only as a whole number from 0 to 2^53 - 1.',
+  'pickedKeys: json is the body of a confirm answered 200. expect is null when it is no pickup answer (not an object, or keys not an array), which pickUp answers as network; else the keys in order, a member left out unless it is an object whose key is text of 1 to MAX_KEY UTF-16 units. Each kept member: model and state texts (else empty), modelName a text or null, entitlements read as a lease ent is, expiresAt, deviceLimit and activeDevices whole numbers from 0 (else null, 0 and 0), versions null unless an object with a whole minMajor from 0 (then maxMajor and upgradeUntil each whole from 0, else null), held true only for JSON true, sale only with a text id and whole index and size of at least 1, activationCode only as exactly six ASCII digits; userLock and every other member are not read.',
+  'pickupChoices: keys are picked keys as read, major the build major (as majors gives it) and now the device clock in ms. expect is {index} of the key restoreByEmail activates, or {refused}. A key covers the build when its versions are null, or when minMajor <= major and (maxMajor is null, or major <= maxMajor, or upgradeUntil is after now). Of the keys that cover it: the first held, else the first with activeDevices < deviceLimit, else the first. No keys at all is no-key; keys none of which covers the build are upgrade when one has versions with minMajor <= major, else outdated.',
 ]
 
 export async function generate() {
