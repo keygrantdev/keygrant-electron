@@ -119,7 +119,9 @@ export class License extends PickupEngine {
    * `client_reference_id`, or null when the device holds no activated licence.
    * Send a customer there to buy an upgrade for the key they hold: a checkout for
    * an upgrade offer finds their key through the activation and extends it rather
-   * than minting a second one.
+   * than minting a second one. Selling through Paddle, `paymentLinkUrl` is the
+   * tenant's own checkout page, which gives `client_reference_id` to Paddle.js
+   * as custom data under the same name.
    *
    * The activation id, and never the licence key: a URL lands in browser
    * history, in logs and in the tenant's Stripe session, and the activation id
